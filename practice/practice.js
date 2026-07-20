@@ -635,7 +635,9 @@
       return;
     }
     document.getElementById('ex-num').textContent = `#${id}`;
-    document.getElementById('ex-title').textContent = ex.title;
+    // Title in the player header shows just the exercise number; the
+    // full name is rendered by Verovio at the top of the score.
+    document.getElementById('ex-title').textContent = `#${id}`;
     document.getElementById('ex-section').textContent = `§${ex.section}`;
     document.getElementById('ex-page').textContent = `p.${ex.page}`;
     document.getElementById('ex-detail-link').href = `../exercises/${id}/`;
