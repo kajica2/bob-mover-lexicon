@@ -415,6 +415,19 @@ CYCLE_STEP = {
 }
 
 
+def semitones_to_fifths(n):
+    """Return the number of fifths for a major key n semitones above C.
+
+    For n in 0..11, returns the standard key signature fifths:
+      0=C(0), 1=C#(7), 2=D(2), 3=D#(9), 4=E(4), 5=F(-1), 6=F#(3),
+      7=G(1), 8=G#(8), 9=A(5), 10=Bb(-2), 11=B(11).
+    The original exercise starts in C (no key signature), so offsets
+    use sharp-side spellings (positive fifths) where possible.
+    """
+    table = {0:0, 1:7, 2:2, 3:9, 4:4, 5:-1, 6:3, 7:1, 8:8, 9:5, 10:-2, 11:11}
+    return table.get(n % 12, 0)
+
+
 def cycle_key_sequence(mode, n=12):
     """Return the n-semitone offset list for the given cycle mode.
 
@@ -463,13 +476,27 @@ def cycle_musicxml(mxl_path, mode, bars):
             out_part.remove(m)
         # For each cycle iteration, deep-copy the base measures, transpose,
         # and insert.
-        from music21 import stream as m21stream
+        from music21 import stream as m21stream, key as m21key
         import copy as _copy
         for i, shift in enumerate(seq):
             # Deep-copy the base_part so we don't mutate the original
             cloned = _copy.deepcopy(base_part)
             if shift != 0:
                 cloned = cloned.transpose(shift)
+            # Insert a key signature at the start of this iteration's first
+            # measure so the new key is announced on the barline (the
+            # keychange only happens at the beginning of a bar).
+            cloned_measures = cloned.getElementsByClass('Measure')
+            if cloned_measures and shift != 0:
+                first_m = cloned_measures[0]
+                # Strip any existing key signature on this measure
+                for k in list(first_m.getElementsByClass('Key')):
+                    first_m.remove(k)
+                # Insert the new key (use a major key from the offset)
+                fifths = semitones_to_fifths(shift)
+                ks = m21key.KeySignature(fifths)
+                # Insert at position 0 of the measure (before any notes)
+                first_m.insert(0, ks)
             # Insert each measure into the output part
             for m in cloned.getElementsByClass('Measure'):
                 out_part.append(m)
@@ -533,6 +560,104 @@ def inject_title_into_musicxml(xml_string, exercise_id, title):
     return xml_string
 
 
+def insert_line_breaks(xml_string, measures_per_line=4):
+    """Insert <print new-system="yes"/> after every Nth <measure> to
+    force Verovio to lay out the score in strict N-measure lines.
+
+    Skips the first measure (no break before it). Skips the last
+    measure's break so the final bar doesn't start a new system.
+
+    Idempotent — re-running with a different N replaces existing
+    new-system markers.
+    """
+    import re
+    if not xml_string or measures_per_line < 1:
+        return xml_string
+    # Remove any existing <print new-system="yes"/> to start clean
+    xml_string = re.sub(
+        r'<print\b[^>]*new-system="yes"[^>]*/>',
+        '',
+        xml_string,
+    )
+    # Walk measures in order, insert <print new-system="yes"/> after every
+    # measures_per_line-th one EXCEPT after the very last measure.
+    parts = re.split(r'(<measure\b)', xml_string)
+    out = [parts[0]]
+    count = 0
+    # First pass: count total measures
+    total_measures = sum(1 for i in range(1, len(parts), 2))
+    for i in range(1, len(parts), 2):
+        tag = parts[i]
+        body = parts[i + 1] if i + 1 < len(parts) else ''
+        out.append(tag)
+        m_end = re.search(r'</measure>', body)
+        if m_end:
+            measure_text = body[:m_end.end()]
+            rest = body[m_end.end():]
+        else:
+            measure_text = body
+            rest = ''
+        out.append(measure_text)
+        count += 1
+        # Insert break after every Nth measure, but not after the last
+        if count % measures_per_line == 0 and count < total_measures and rest:
+            out.append('<print new-system="yes"/>')
+        out.append(rest)
+    return ''.join(out)
+
+
+def strip_score_junk(xml_string):
+    """Remove dynamic markings, voice/staff labels, and other markings
+    that clutter the score. Keeps the title and the notes only.
+
+    - Strips <direction> elements (dynamics, text directions, tempo).
+    - Strips <staff-text> elements.
+    - Empties <part-name>, <part-abbreviation>, and <instrument-name>
+      so Verovio doesn't render a default 'Voice' staff label.
+    Idempotent.
+    """
+    import re
+    if not xml_string:
+        return xml_string
+
+    # All <direction>...</direction> blocks (paired tags)
+    xml_string = re.sub(
+        r"<direction\b[^>]*>.*?</direction>",
+        "",
+        xml_string,
+        flags=re.DOTALL,
+    )
+    # Self-closed <direction/>
+    xml_string = re.sub(r"<direction\b[^>]*/>", "", xml_string)
+
+    # <staff-text>...</staff-text>
+    xml_string = re.sub(
+        r"<staff-text\b[^>]*>.*?</staff-text>",
+        "",
+        xml_string,
+        flags=re.DOTALL,
+    )
+    xml_string = re.sub(r"<staff-text\b[^>]*/>", "", xml_string)
+
+    # Empty out part-name, part-abbreviation, instrument-name
+    xml_string = re.sub(
+        r"<part-name>[^<]*</part-name>",
+        "<part-name></part-name>",
+        xml_string,
+    )
+    xml_string = re.sub(
+        r"<part-abbreviation>[^<]*</part-abbreviation>",
+        "<part-abbreviation></part-abbreviation>",
+        xml_string,
+    )
+    xml_string = re.sub(
+        r"<instrument-name>[^<]*</instrument-name>",
+        "<instrument-name></instrument-name>",
+        xml_string,
+    )
+    return xml_string
+
+
 def get_musicxml_with_title(exercise_id, transpose_semitones=0):
     """Like get_musicxml, but with the exercise title injected into the
     MusicXML <work> element so Verovio renders it at the top.
@@ -548,6 +673,8 @@ def get_musicxml_with_title(exercise_id, transpose_semitones=0):
             xml = inject_title_into_musicxml(xml, exercise_id, ex.get("title", ""))
     except Exception:
         pass
+    xml = strip_score_junk(xml)
+    xml = insert_line_breaks(xml, 4)
     return xml, ctype
 
 
@@ -750,6 +877,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 )
             except Exception:
                 xml = inject_title_into_musicxml(xml, eid, "")
+                xml = strip_score_junk(xml)
+                xml = insert_line_breaks(xml, 4)
         if xml is None:
             return self.send_json({"error": "Cycle generation failed"}, 500)
         self.send_response(200)

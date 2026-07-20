@@ -490,12 +490,21 @@
     try {
       const opts = {
         scale: state.zoomScale,
-        adjustPageHeight: true,
+        // Server inserts <print new-system="yes"/> every 4 measures, so
+        // we just respect the print marks here.
         breaks: 'auto',
+        adjustPageHeight: true,
+        justifyVertically: false,
+        spacingSystem: 6,
+        spacingStaff: 2,
       };
       if (state.fullPage) {
         opts.pageWidth = 1800;
         opts.pageHeight = 2400;
+      } else {
+        // Match the inline score-container width
+        opts.pageWidth = 1263;
+        opts.pageHeight = 1500;
       }
       state.verovio.setOptions(opts);
       state.verovio.loadData(state.rawXml);
