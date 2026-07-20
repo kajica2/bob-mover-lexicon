@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>History — Bob Mover Jazz Lexicon</title>
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="history.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎷</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="../" class="brand">
+        <span class="brand-icon">🎷</span>
+        <div>
+          <h1>Bob Mover Jazz Lexicon</h1>
+          <p class="brand-sub">Practice Library · <span id="total-count">407</span> exercises</p>
+        </div>
+      </a>
+      <nav class="site-nav">
+        <a href="../" class="nav-link">Browse</a>
+        <a href="../#sheet" class="nav-link">Build Sheet</a>
+        <a href="../practice/" class="nav-link">Practice</a>
+        <a href="./" class="nav-link active">History</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <a href="../" class="back-link">← Back to browse</a>
+    <h2>Practice History</h2>
+    <p class="subtitle">Track what you've practiced, at what tempo, and when.</p>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-num" id="stat-sessions">—</div>
+        <div class="stat-label">Sessions (30d)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-unique">—</div>
+        <div class="stat-label">Unique exercises</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-minutes">—</div>
+        <div class="stat-label">Minutes practiced</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num" id="stat-max-tempo">—</div>
+        <div class="stat-label">Max tempo</div>
+      </div>
+    </div>
+
+    <div class="history-grid">
+      <div class="card">
+        <h3>Activity heatmap (last 30 days)</h3>
+        <div id="heatmap" class="heatmap"></div>
+      </div>
+
+      <div class="card">
+        <h3>Most practiced</h3>
+        <div id="top-exercises" class="top-list"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>All sessions</h3>
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Exercise</th>
+            <th>Tempo</th>
+            <th>Key</th>
+            <th>Duration</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="history-tbody">
+          <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <script src="history.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Database (will be created at runtime on Railway)
+practice.db
+practice.db-journal
+*.db-wal
+*.db-shm
+
+# Test data
+/tmp/test_*.pdf

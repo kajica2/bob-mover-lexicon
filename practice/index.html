@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Practice — Bob Mover Jazz Lexicon</title>
+  <link rel="stylesheet" href="../styles.css">
+  <link rel="stylesheet" href="practice.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎷</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="../" class="brand">
+        <span class="brand-icon">🎷</span>
+        <div>
+          <h1>Bob Mover Jazz Lexicon</h1>
+          <p class="brand-sub">Practice Library · <span id="total-count">407</span> exercises</p>
+        </div>
+      </a>
+      <nav class="site-nav">
+        <a href="../" class="nav-link">Browse</a>
+        <a href="../#sheet" class="nav-link">Build Sheet</a>
+        <a href="./" class="nav-link active">Practice</a>
+        <a href="../history" class="nav-link">History</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="practice-layout">
+      <!-- LEFT: Player + score -->
+      <div class="player-panel">
+        <div class="card player-card">
+          <div class="player-header">
+            <div>
+              <h2 id="ex-num" class="ex-num">#1</h2>
+              <p id="ex-title" class="ex-title">Loading…</p>
+              <p class="ex-meta">
+                <span class="chip" id="ex-section">§1A</span>
+                <span id="ex-page" class="meta">p.23</span>
+                <a id="ex-detail-link" class="link" href="#">Open detail →</a>
+              </p>
+            </div>
+            <div class="player-nav">
+              <button id="btn-prev" class="btn btn-ghost" title="Previous exercise">←</button>
+              <button id="btn-next" class="btn btn-ghost" title="Next exercise">→</button>
+            </div>
+          </div>
+
+          <div class="player-controls">
+            <div class="control-row">
+              <label>Instrument</label>
+              <select id="instrument" class="input">
+                <option value="concert">Concert pitch</option>
+                <option value="tenor">Tenor Sax / Bb</option>
+                <option value="alto">Alto Sax / Eb</option>
+                <option value="soprano">Soprano Sax / Bb</option>
+                <option value="bari">Bari Sax / Eb</option>
+                <option value="trumpet">Trumpet / Bb</option>
+                <option value="clarinet">Clarinet / Bb</option>
+              </select>
+              <label>Transpose</label>
+              <select id="transpose" class="input">
+                <option value="0">Original</option>
+                <option value="-2">Down M2</option>
+                <option value="-1">Down m2</option>
+                <option value="1">Up m2</option>
+                <option value="2">Up M2</option>
+                <option value="3">Up m3</option>
+                <option value="4">Up M3</option>
+                <option value="5">Up P4</option>
+                <option value="6">Up tritone</option>
+                <option value="7">Up P5</option>
+              </select>
+            </div>
+            <div class="control-row">
+              <label>Tempo</label>
+              <input id="tempo" type="number" value="120" min="40" max="320" class="input tempo-input">
+              <span class="bpm">BPM</span>
+              <button id="btn-play" class="btn btn-primary">
+                <span id="play-label">▶ Play</span>
+              </button>
+              <button id="btn-stop" class="btn btn-secondary" disabled>⏹ Stop</button>
+            </div>
+            <div class="control-row">
+              <label>Volume</label>
+              <input id="volume" type="range" min="0" max="100" value="50" class="slider">
+            </div>
+            <div class="control-row">
+              <label>Metronome</label>
+              <input id="metronome" type="checkbox" checked>
+              <span class="hint">Click on beat 1</span>
+            </div>
+          </div>
+
+          <!-- Score display -->
+          <div id="score-container" class="score-container">
+            <div class="score-loading">Loading notation…</div>
+          </div>
+        </div>
+
+        <!-- Log practice -->
+        <div class="card log-card">
+          <h3>Log this practice</h3>
+          <p class="hint">Recording what you did makes history more useful for spaced repetition.</p>
+          <div class="log-form">
+            <div class="form-row">
+              <label>Tempo reached</label>
+              <input id="log-tempo" type="number" min="40" max="320" placeholder="120" class="input">
+            </div>
+            <div class="form-row">
+              <label>Duration (minutes)</label>
+              <input id="log-duration" type="number" min="0" step="0.5" placeholder="5" class="input">
+            </div>
+            <div class="form-row">
+              <label>Key / position</label>
+              <input id="log-key" type="text" placeholder="C, Bb, etc." class="input">
+            </div>
+            <div class="form-row full">
+              <label>Notes</label>
+              <textarea id="log-notes" rows="2" placeholder="What went well, what to work on..." class="input"></textarea>
+            </div>
+            <div class="form-row full">
+              <label class="checkbox">
+                <input id="log-completed" type="checkbox" checked> Mark as completed
+              </label>
+            </div>
+            <button id="btn-log" class="btn btn-primary btn-block">Log Practice</button>
+            <p id="log-status" class="hint"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Queue + history + collections -->
+      <div class="side-panel">
+        <div class="card">
+          <div class="card-header">
+            <h3>Session Queue</h3>
+            <span class="hint" id="queue-count">0</span>
+          </div>
+          <p class="hint">Click "Add to queue" on any exercise to build a practice session.</p>
+          <div id="queue-list" class="queue-list"></div>
+        </div>
+
+        <div class="card">
+          <h3>Recent Practice</h3>
+          <div id="recent-list" class="recent-list">
+            <p class="hint">Loading…</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Collections</h3>
+          <div id="collections-list" class="collections-list">
+            <p class="hint">Loading…</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="vendor/verovio-toolkit.js"></script>
+  <script src="practice.js"></script>
+</body>
+</html>

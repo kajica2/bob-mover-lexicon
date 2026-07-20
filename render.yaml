@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: bob-mover-lexicon
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 server.py
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        generateValue: true
+        prefix: ""
+    autoDeploy: true
