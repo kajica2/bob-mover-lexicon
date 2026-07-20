@@ -336,27 +336,83 @@
     '5ths': 7,
   };
 
-  function buildCycleNotes(originalNotes, mode, bars) {
-    if (mode === 'off' || bars <= 1) return originalNotes;
+  // Per-instrument playable MIDI range (concert pitch). Notes outside the
+  // range are dropped during the cycle so the transposed pattern stays
+  // physically playable on the selected horn.
+  // Standard ranges pulled from common method books.
+  const INSTRUMENT_RANGES = {
+    concert:  { min: 21, max: 108 }, // full piano — no clamp
+    soprano:  { min: 56, max: 100 }, // Ab3–E6 (concert), Bb soprano
+    alto:     { min: 49, max: 81 },  // Db3–A5 (concert), Eb alto
+    tenor:    { min: 44, max: 76 },  // Ab2–E5 (concert), Bb tenor
+    bari:     { min: 36, max: 69 },  // Db2–A4 (concert), Eb bari
+    trumpet:  { min: 52, max: 84 },  // E3–C6 (concert), Bb trumpet
+    clarinet: { min: 50, max: 95 },  // D3–Bb6 (concert), Bb clarinet (low E is rare)
+  };
+
+  const CYCLE_MODE_LABELS = {
+    off: 'Off',
+    chromatic: 'Chromatic',
+    min3: 'Minor 3rds',
+    '4ths': 'In 4ths',
+    '5ths': 'In 5ths',
+  };
+
+  // Build a sequence of 12 semitone offsets for the given mode (mod 12).
+  function cycleKeySequence(mode) {
+    if (mode === 'off' || mode == null) return [0];
     const step = CYCLE_STEP[mode];
-    if (step == null) return originalNotes;
-    // Find the duration of one full pass (max beat+duration in original notes)
+    if (step == null) return [0];
+    const seq = [];
+    let s = 0;
+    for (let i = 0; i < 12; i++) {
+      seq.push(s);
+      s = (s + step) % 12;
+    }
+    return seq;
+  }
+
+  // Returns { notes, dropped } where dropped is the count of notes that
+  // fell outside the instrument's playable range.
+  function buildCycleNotes(originalNotes, mode, bars, instrument) {
+    const stats = { dropped: 0, kept: 0, lastKey: 0 };
+    if (mode === 'off' || bars <= 1) {
+      stats.kept = originalNotes.length;
+      return { notes: originalNotes, stats };
+    }
+    const step = CYCLE_STEP[mode];
+    if (step == null) {
+      stats.kept = originalNotes.length;
+      return { notes: originalNotes, stats };
+    }
+    const range = INSTRUMENT_RANGES[instrument] || INSTRUMENT_RANGES.concert;
     const passLen = Math.max(
       ...originalNotes.map(n => n.beat + n.duration),
     );
+    // Use the mod-12 key sequence so all 12 transpositions land on unique
+    // keys (e.g. 5ths: 0, 7, 2, 9, 4, 11, 6, 1, 8, 3, 10, 5) — the pattern
+    // stays in the same register rather than climbing off the horn.
+    const seq = cycleKeySequence(mode);
     const out = [];
     for (let i = 0; i < bars; i++) {
-      const shift = step * i;
+      const shift = seq[i] || 0;
+      stats.lastKey = shift;
       const offset = i * passLen;
       for (const n of originalNotes) {
-        out.push({
-          midi: n.midi + shift,
-          beat: n.beat + offset,
-          duration: n.duration,
-        });
+        const m = n.midi + shift;
+        if (m < range.min || m > range.max) {
+          stats.dropped++;
+        } else {
+          out.push({
+            midi: m,
+            beat: n.beat + offset,
+            duration: n.duration,
+          });
+          stats.kept++;
+        }
       }
     }
-    return out;
+    return { notes: out, stats };
   }
 
   // ===== Playback =====
@@ -370,13 +426,22 @@
     const bpm = parseInt(document.getElementById('tempo').value) || 120;
     const secondsPerBeat = 60 / bpm;
 
-    // Apply the Cycle mode (extends the exercise across keys)
-    const cycleMode = (document.getElementById('cycle-mode') || {}).value || 'off';
-    const cycleBars = Math.max(1, parseInt(
-      (document.getElementById('cycle-bars') || {}).value || '12', 10,
-    ));
-    const notes = buildCycleNotes(state.currentScore.notes, cycleMode, cycleBars);
+    // Apply the Cycle mode (extends the exercise across keys).
+    // Reads from the committed state (set by applyCycle) so the user's
+    // explicit "Apply" press controls playback, not the live dropdown.
+    const instr = (document.getElementById('instrument') || {}).value || 'concert';
+    const cycleMode = state.cycleCommitted ? state.cycleCommitted.mode : 'off';
+    const cycleBars = state.cycleCommitted ? state.cycleCommitted.bars : 1;
+    const { notes, stats } = buildCycleNotes(
+      state.currentScore.notes, cycleMode, cycleBars, instr,
+    );
     if (notes.length === 0) return;
+    if (stats.dropped > 0) {
+      console.info(
+        `[cycle] ${stats.dropped} note(s) dropped — outside ${instr} range ` +
+        `(${INSTRUMENT_RANGES[instr].min}-${INSTRUMENT_RANGES[instr].max} MIDI)`,
+      );
+    }
 
     const useMetronome = document.getElementById('metronome').checked;
     const startTime = state.audioCtx.currentTime + 0.1;
@@ -502,6 +567,8 @@
     renderQueue();
     // Fetch practice history for this exercise
     loadExerciseHistory(id);
+    // Re-evaluate cycle against the new score + instrument range
+    if (typeof applyCycle === 'function') applyCycle();
   }
 
   async function loadExerciseHistory(id) {
@@ -701,31 +768,77 @@
       if (idx < state.exercises.length - 1) loadExercise(state.exercises[idx + 1].id);
     });
     document.getElementById('instrument').addEventListener('change', () => {
-      if (state.currentId) loadExercise(state.currentId);
+      if (state.currentId) {
+        loadExercise(state.currentId);
+        // Re-evaluate cycle against new instrument range
+        if (typeof applyCycle === 'function') applyCycle();
+      }
     });
     document.getElementById('transpose').addEventListener('change', () => {
       if (state.currentId) loadExercise(state.currentId);
     });
 
-    // Cycle controls — persisted across sessions, don't reload score on change
-    // (the cycle only affects playback scheduling, not the rendered notation).
+    // Cycle controls — dropdown/bars are STAGED, then committed by the
+    // Apply button. Persisted across sessions.
     const cycleModeSel = document.getElementById('cycle-mode');
     const cycleBarsInp = document.getElementById('cycle-bars');
-    try {
-      const savedCycle = JSON.parse(localStorage.getItem('practice_cycle') || '{}');
-      if (savedCycle.mode && cycleModeSel) cycleModeSel.value = savedCycle.mode;
-      if (savedCycle.bars && cycleBarsInp) cycleBarsInp.value = savedCycle.bars;
-    } catch (e) { /* ignore */ }
-    const saveCycle = () => {
+    const cycleApplyBtn = document.getElementById('cycle-apply');
+    const cycleBadge = document.getElementById('cycle-badge');
+    state.cycleCommitted = { mode: 'off', bars: 1, key: 0, dropped: 0 };
+
+    function updateBadge(committed) {
+      if (!cycleBadge) return;
+      const { mode, bars, key, dropped } = committed;
+      if (mode === 'off' || bars <= 1) {
+        cycleBadge.textContent = 'Cycle off';
+        cycleBadge.className = 'cycle-badge off';
+      } else {
+        const seq = cycleKeySequence(mode).slice(0, bars);
+        const lastKey = seq[seq.length - 1] || 0;
+        cycleBadge.textContent =
+          `Cycle: ${bars}× in ${CYCLE_MODE_LABELS[mode] || mode} ` +
+          `(last shift +${lastKey} st)` +
+          (dropped > 0 ? ` · ${dropped} dropped` : '');
+        cycleBadge.className = 'cycle-badge on';
+      }
+    }
+
+    function applyCycle() {
+      if (!state.currentScore) {
+        // No exercise loaded yet — just commit the staged values
+        const mode = cycleModeSel ? cycleModeSel.value : 'off';
+        const bars = cycleBarsInp ? Math.max(1, Math.min(12, parseInt(cycleBarsInp.value, 10) || 12)) : 1;
+        state.cycleCommitted = { mode, bars, key: 0, dropped: 0 };
+        updateBadge(state.cycleCommitted);
+        return;
+      }
+      const instr = (document.getElementById('instrument') || {}).value || 'concert';
+      const mode = cycleModeSel ? cycleModeSel.value : 'off';
+      const bars = cycleBarsInp ? Math.max(1, Math.min(12, parseInt(cycleBarsInp.value, 10) || 12)) : 12;
+      const seq = cycleKeySequence(mode);
+      const lastKey = mode === 'off' ? 0 : (seq[Math.min(bars, seq.length) - 1] || 0);
+      const { stats } = buildCycleNotes(state.currentScore.notes, mode, bars, instr);
+      state.cycleCommitted = { mode, bars, key: lastKey, dropped: stats.dropped };
+      // Persist
       try {
-        localStorage.setItem('practice_cycle', JSON.stringify({
-          mode: cycleModeSel ? cycleModeSel.value : 'off',
-          bars: cycleBarsInp ? parseInt(cycleBarsInp.value, 10) || 12 : 12,
-        }));
+        localStorage.setItem('practice_cycle', JSON.stringify({ mode, bars }));
       } catch (e) { /* ignore */ }
-    };
-    if (cycleModeSel) cycleModeSel.addEventListener('change', saveCycle);
-    if (cycleBarsInp) cycleBarsInp.addEventListener('input', saveCycle);
+      updateBadge(state.cycleCommitted);
+    }
+
+    try {
+      const saved = JSON.parse(localStorage.getItem('practice_cycle') || '{}');
+      if (saved.mode && cycleModeSel) cycleModeSel.value = saved.mode;
+      if (saved.bars && cycleBarsInp) cycleBarsInp.value = saved.bars;
+    } catch (e) { /* ignore */ }
+
+    // Re-apply when exercise or instrument changes (since range may differ)
+    if (cycleApplyBtn) cycleApplyBtn.addEventListener('click', applyCycle);
+    if (cycleModeSel) cycleModeSel.addEventListener('change', applyCycle);
+    if (cycleBarsInp) cycleBarsInp.addEventListener('input', applyCycle);
+    // Initial commit so the badge reflects the restored state
+    applyCycle();
+    updateBadge(state.cycleCommitted);
     document.getElementById('tempo').addEventListener('input', (e) => {
       e.target.dataset.userSet = '1';
     });

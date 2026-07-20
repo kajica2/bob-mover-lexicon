@@ -82,8 +82,11 @@
                 <option value="5ths">In 5ths (+7 each bar)</option>
               </select>
               <label>Bars</label>
-              <input id="cycle-bars" type="number" class="input" min="1" max="24" value="12"
-                     title="Number of repetitions (how many bars to add)" style="width:70px">
+              <input id="cycle-bars" type="number" class="input" min="1" max="12" value="12"
+                     title="Number of repetitions (1-12). The exercise will play this many times longer." style="width:70px">
+              <button id="cycle-apply" class="btn btn-secondary btn-sm"
+                      title="Apply the cycle to the exercise — makes it N times longer">✓ Apply</button>
+              <span id="cycle-badge" class="cycle-badge off">Cycle off</span>
             </div>
             <div class="control-row">
               <label>Tempo</label>
