@@ -17,50 +17,154 @@
   };
 
   // ===== Audio engine =====
-  // A richer synth: 2-op FM (carrier + modulator), lowpass filter envelope,
-  // vibrato, and a feedback-delay for ambience. Master gain controls volume.
+  // Polyphonic FM synth with explicit voice allocation (max 8 voices),
+  // mono output, and a single-tap feedback reverb. Built on raw Web Audio
+  // (Tone.js not bundled in this repo); API is Tone.js-shaped so swapping
+  // in `new Tone.PolySynth(...)` later is a small change.
+
+  const NUM_VOICES = 8;
+  const VOICE_REVERB_WET = 0.20;
 
   function initAudio() {
     if (state.audioCtx) return state.audioCtx;
     const Ctx = window.AudioContext || window.webkitAudioContext;
-    state.audioCtx = new Ctx();
+    const ctx = new Ctx();
 
-    // Master gain (volume slider writes here)
-    state.masterGain = state.audioCtx.createGain();
+    // ----- Force mono output on the destination -----
+    // Prevents phase issues across stereo speakers and matches the
+    // single-voice sax practice aesthetic.
+    try {
+      ctx.destination.channelCount = 1;
+      ctx.destination.channelCountMode = 'explicit';
+      ctx.destination.channelInterpretation = 'speakers';
+    } catch (e) {
+      console.warn('Could not force mono destination:', e);
+    }
+
+    // ----- Master bus -----
+    state.masterGain = ctx.createGain();
     state.masterGain.gain.value = 0.5;
 
-    // Soft compressor to keep peaks tame
-    state.compressor = state.audioCtx.createDynamicsCompressor();
-    state.compressor.threshold.value = -18;
-    state.compressor.knee.value = 12;
+    state.compressor = ctx.createDynamicsCompressor();
+    state.compressor.threshold.value = -16;
+    state.compressor.knee.value = 10;
     state.compressor.ratio.value = 4;
     state.compressor.attack.value = 0.003;
     state.compressor.release.value = 0.18;
 
-    // Stereo delay (ambience)
-    state.delayL = state.audioCtx.createDelay(1.0);
-    state.delayR = state.audioCtx.createDelay(1.0);
-    state.delayL.delayTime.value = 0.21;
-    state.delayR.delayTime.value = 0.27;
-    state.delayFB = state.audioCtx.createGain();
-    state.delayFB.gain.value = 0.28;
-    const merger = state.audioCtx.createChannelMerger(2);
-    state.delayL.connect(merger, 0, 0);
-    state.delayR.connect(merger, 0, 1);
-    state.delayL.connect(state.delayFB);
-    state.delayR.connect(state.delayFB);
-    state.delayFB.connect(state.delayL);
-    state.delayFB.connect(state.delayR);
-    state.delayOut = state.audioCtx.createGain();
-    state.delayOut.gain.value = 0.22;
-    merger.connect(state.delayOut);
-
-    // Wire master chain
     state.masterGain.connect(state.compressor);
-    state.compressor.connect(state.audioCtx.destination);
-    state.delayOut.connect(state.compressor);
+    state.compressor.connect(ctx.destination);
 
-    return state.audioCtx;
+    // ----- Mono feedback reverb (single delay line) -----
+    state.reverbIn = ctx.createGain();
+    state.reverbIn.gain.value = 1.0;
+    state.reverbDelay = ctx.createDelay(1.0);
+    state.reverbDelay.delayTime.value = 0.18;
+    state.reverbFB = ctx.createGain();
+    state.reverbFB.gain.value = 0.22;
+    state.reverbWet = ctx.createGain();
+    state.reverbWet.gain.value = VOICE_REVERB_WET;
+    state.reverbIn.connect(state.reverbDelay);
+    state.reverbDelay.connect(state.reverbFB);
+    state.reverbFB.connect(state.reverbDelay);
+    state.reverbDelay.connect(state.reverbWet);
+    state.reverbWet.connect(state.masterGain);
+
+    state.audioCtx = ctx;
+    state.voices = [];
+    for (let i = 0; i < NUM_VOICES; i++) state.voices.push(createVoice(ctx));
+
+    // Dedicated mono metronome bus (keeps the click out of reverb)
+    state.metroGain = ctx.createGain();
+    state.metroGain.gain.value = 0.7;
+    state.metroGain.connect(state.masterGain);
+
+    return ctx;
+  }
+
+  function createVoice(ctx) {
+    // Persistent voice: oscillators run forever, amp envelope gates audio.
+    // Reusing nodes avoids per-note allocation and start/stop cliffs.
+    const carrier = ctx.createOscillator();
+    carrier.type = 'triangle';
+    carrier.frequency.value = 440;
+
+    const mod = ctx.createOscillator();
+    mod.type = 'sine';
+    mod.frequency.value = 880;
+    const modDepth = ctx.createGain();
+    modDepth.gain.value = 0;
+    mod.connect(modDepth);
+    modDepth.connect(carrier.frequency);
+
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.value = 220;
+    const subGain = ctx.createGain();
+    subGain.gain.value = 0.32;
+    sub.connect(subGain);
+
+    const mix = ctx.createGain();
+    mix.gain.value = 1.0;
+    carrier.connect(mix);
+    subGain.connect(mix);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 2;
+    filter.frequency.value = 1200;
+    mix.connect(filter);
+
+    const amp = ctx.createGain();
+    amp.gain.value = 0;
+    filter.connect(amp);
+    amp.connect(state.masterGain);
+
+    const wetTap = ctx.createGain();
+    wetTap.gain.value = 1.0;
+    amp.connect(wetTap);
+    wetTap.connect(state.reverbIn);
+
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 5.5;
+    const lfoDepth = ctx.createGain();
+    lfoDepth.gain.value = 0;
+    lfo.connect(lfoDepth);
+    lfoDepth.connect(carrier.frequency);
+
+    carrier.start();
+    mod.start();
+    sub.start();
+    lfo.start();
+
+    return {
+      ctx, carrier, mod, modDepth, sub, subGain,
+      filter, amp, lfo, lfoDepth, wetTap,
+      inUse: false,
+      noteOnTime: -1,
+      scheduledStop: -1,
+    };
+  }
+
+  function findFreeVoice() {
+    // Idle voice first; if all busy, steal the oldest one (hard cut).
+    let oldest = state.voices[0];
+    for (const v of state.voices) {
+      if (!v.inUse) return v;
+      if (v.noteOnTime < oldest.noteOnTime) oldest = v;
+    }
+    hardStopVoice(oldest);
+    return oldest;
+  }
+
+  function hardStopVoice(v) {
+    const now = v.ctx.currentTime;
+    v.amp.gain.cancelScheduledValues(now);
+    v.amp.gain.setTargetAtTime(0, now, 0.005);
+    v.inUse = false;
+    v.noteOnTime = -1;
+    v.scheduledStop = -1;
   }
 
   function playNote(midi, duration = 0.5, time = null, velocity = 0.85) {
@@ -68,86 +172,55 @@
     const ctx = state.audioCtx;
     const t = time !== null ? time : ctx.currentTime;
     const freq = midiToFreq(midi);
+    const v = findFreeVoice();
 
-    // ----- Carrier (triangle — woody, sax-ish) -----
-    const carrier = ctx.createOscillator();
-    carrier.type = 'triangle';
-    carrier.frequency.value = freq;
+    v.inUse = true;
+    v.noteOnTime = t;
+    v.scheduledStop = t + duration;
 
-    // ----- Modulator (sine, octave up, ratio * index = FM brightness) -----
-    const mod = ctx.createOscillator();
-    mod.type = 'sine';
-    mod.frequency.value = freq * 2;
-    const modGain = ctx.createGain();
-    // Modulation index (FM depth). Higher = brighter/harmonically richer.
-    modGain.gain.value = freq * 1.5;
-    mod.connect(modGain);
-    modGain.connect(carrier.frequency);
+    v.carrier.frequency.cancelScheduledValues(t);
+    v.carrier.frequency.setValueAtTime(freq, t);
+    v.mod.frequency.cancelScheduledValues(t);
+    v.mod.frequency.setValueAtTime(freq * 2, t);
+    v.sub.frequency.cancelScheduledValues(t);
+    v.sub.frequency.setValueAtTime(freq * 0.5, t);
 
-    // ----- Sub-oscillator for body (one octave below) -----
-    const sub = ctx.createOscillator();
-    sub.type = 'sine';
-    sub.frequency.value = freq * 0.5;
-    const subGain = ctx.createGain();
-    subGain.gain.value = 0.35;
-    sub.connect(subGain);
+    v.modDepth.gain.cancelScheduledValues(t);
+    v.modDepth.gain.setValueAtTime(freq * 1.2, t);
 
-    // ----- Mix carrier + sub -----
-    const mix = ctx.createGain();
-    mix.gain.value = 1.0;
-    carrier.connect(mix);
-    subGain.connect(mix);
+    v.lfoDepth.gain.cancelScheduledValues(t);
+    if (duration > 0.25) {
+      v.lfoDepth.gain.setValueAtTime(0, t);
+      v.lfoDepth.gain.linearRampToValueAtTime(freq * 0.010, t + 0.25);
+      v.lfoDepth.gain.linearRampToValueAtTime(0, t + duration);
+    } else {
+      v.lfoDepth.gain.setValueAtTime(0, t);
+    }
 
-    // ----- Lowpass filter with envelope (mimics breath/articulation) -----
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.Q.value = 4;
-    filter.frequency.setValueAtTime(800, t);
-    filter.frequency.linearRampToValueAtTime(Math.min(freq * 8, 6000), t + 0.04);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 1.5, 600), t + duration);
+    v.filter.frequency.cancelScheduledValues(t);
+    v.filter.frequency.setValueAtTime(800, t);
+    v.filter.frequency.linearRampToValueAtTime(Math.min(freq * 6, 5000), t + 0.04);
+    v.filter.frequency.exponentialRampToValueAtTime(
+      Math.max(freq * 1.5, 500), t + duration,
+    );
 
-    // ----- Amp envelope -----
-    const amp = ctx.createGain();
-    const peak = 0.32 * velocity;
-    amp.gain.setValueAtTime(0, t);
-    amp.gain.linearRampToValueAtTime(peak, t + 0.015);
-    amp.gain.linearRampToValueAtTime(peak * 0.7, t + 0.12); // slight sustain dip
-    amp.gain.setValueAtTime(peak * 0.7, t + Math.max(0.12, duration - 0.05));
-    amp.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    const peak = 0.28 * velocity;
+    v.amp.gain.cancelScheduledValues(t);
+    v.amp.gain.setValueAtTime(0, t);
+    v.amp.gain.linearRampToValueAtTime(peak, t + 0.012);
+    v.amp.gain.linearRampToValueAtTime(peak * 0.7, t + 0.10);
+    const releaseStart = Math.max(0.12, duration - 0.08);
+    v.amp.gain.setValueAtTime(peak * 0.7, t + releaseStart);
+    v.amp.gain.exponentialRampToValueAtTime(0.0005, t + duration);
 
-    // ----- Vibrato (LFO on carrier frequency, kicks in after 200ms) -----
-    const lfo = ctx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 5.5; // ~5.5 Hz vibrato
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.setValueAtTime(0, t);
-    lfoGain.gain.linearRampToValueAtTime(freq * 0.012, t + 0.25);
-    lfoGain.gain.setValueAtTime(freq * 0.012, t + Math.max(0.25, duration - 0.1));
-    lfoGain.gain.linearRampToValueAtTime(0, t + duration);
-    lfo.connect(lfoGain);
-    lfoGain.connect(carrier.frequency);
-
-    // ----- Wiring -----
-    mix.connect(filter);
-    filter.connect(amp);
-    // Dry to master
-    amp.connect(state.masterGain);
-    // Wet to delay taps
-    const wetTap = ctx.createGain();
-    wetTap.gain.value = 0.35;
-    amp.connect(wetTap);
-    wetTap.connect(state.delayL);
-    wetTap.connect(state.delayR);
-
-    // Start/stop
-    carrier.start(t);
-    mod.start(t);
-    sub.start(t);
-    lfo.start(t);
-    carrier.stop(t + duration + 0.05);
-    mod.stop(t + duration + 0.05);
-    sub.stop(t + duration + 0.05);
-    lfo.stop(t + duration + 0.05);
+    // Release voice back to pool after note ends
+    const releaseMs = (duration + 0.02) * 1000;
+    setTimeout(() => {
+      if (v.inUse && Math.abs(v.noteOnTime - t) < 1e-6) {
+        v.inUse = false;
+        v.noteOnTime = -1;
+      }
+    }, releaseMs);
   }
 
   function midiToFreq(midi) {
@@ -165,21 +238,25 @@
     const peak = accent ? 0.22 : 0.13;
     gain.gain.setValueAtTime(0, now);
     gain.gain.linearRampToValueAtTime(peak, now + 0.001);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+    gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.045);
     osc.connect(gain);
-    gain.connect(state.masterGain);
+    gain.connect(state.metroGain);
     osc.start(now);
-    osc.stop(now + 0.05);
+    osc.stop(now + 0.06);
   }
 
   function setVolume(v) {
     const vol = Math.max(0, Math.min(100, v)) / 100;
     if (state.masterGain) {
-      // Smooth ramp to avoid clicks
       const ctx = state.audioCtx;
       state.masterGain.gain.cancelScheduledValues(ctx.currentTime);
       state.masterGain.gain.setTargetAtTime(vol, ctx.currentTime, 0.02);
     }
+  }
+
+  function panic() {
+    // Immediately silence all voices (called by stop())
+    if (state.voices) for (const v of state.voices) hardStopVoice(v);
   }
 
   // ===== MusicXML playback =====
@@ -247,16 +324,58 @@
     return 12 * (octave + 1) + stepMap[step] + (alter || 0);
   }
 
+  // ===== Cycle (adds bars across keys) =====
+  // When the user picks a Cycle mode other than 'off' and Bars > 1, the
+  // current exercise is repeated Bars times during playback, each repetition
+  // transposed by `step * i` semitones. The original (transposed by the
+  // Transpose dropdown) is iteration 0.
+  const CYCLE_STEP = {
+    chromatic: 1,
+    min3: 3,
+    '4ths': 5,
+    '5ths': 7,
+  };
+
+  function buildCycleNotes(originalNotes, mode, bars) {
+    if (mode === 'off' || bars <= 1) return originalNotes;
+    const step = CYCLE_STEP[mode];
+    if (step == null) return originalNotes;
+    // Find the duration of one full pass (max beat+duration in original notes)
+    const passLen = Math.max(
+      ...originalNotes.map(n => n.beat + n.duration),
+    );
+    const out = [];
+    for (let i = 0; i < bars; i++) {
+      const shift = step * i;
+      const offset = i * passLen;
+      for (const n of originalNotes) {
+        out.push({
+          midi: n.midi + shift,
+          beat: n.beat + offset,
+          duration: n.duration,
+        });
+      }
+    }
+    return out;
+  }
+
   // ===== Playback =====
   function play() {
     if (!state.currentScore) return;
     initAudio();
-    if (state.audioCtx.state === 'suspended') state.audioCtx.resume();
+    if (state.audioCtx.state === 'suspended') {
+      state.audioCtx.resume();
+    }
     state.isPlaying = true;
     const bpm = parseInt(document.getElementById('tempo').value) || 120;
     const secondsPerBeat = 60 / bpm;
 
-    const notes = state.currentScore.notes;
+    // Apply the Cycle mode (extends the exercise across keys)
+    const cycleMode = (document.getElementById('cycle-mode') || {}).value || 'off';
+    const cycleBars = Math.max(1, parseInt(
+      (document.getElementById('cycle-bars') || {}).value || '12', 10,
+    ));
+    const notes = buildCycleNotes(state.currentScore.notes, cycleMode, cycleBars);
     if (notes.length === 0) return;
 
     const useMetronome = document.getElementById('metronome').checked;
@@ -293,7 +412,10 @@
     state.isPlaying = false;
     if (state.playInterval) clearTimeout(state.playInterval);
     if (state.metronomeInterval) clearInterval(state.metronomeInterval);
-    if (state.audioCtx) state.audioCtx.close().then(() => state.audioCtx = null);
+    // Silences voices in place — keeps the AudioContext alive so the next
+    // play() doesn't have to recreate oscillators and modulators.
+    panic();
+    if (state.audioCtx) state.audioCtx.suspend();
     document.getElementById('play-label').textContent = '▶ Play';
     document.getElementById('btn-play').disabled = false;
     document.getElementById('btn-stop').disabled = true;
@@ -584,6 +706,26 @@
     document.getElementById('transpose').addEventListener('change', () => {
       if (state.currentId) loadExercise(state.currentId);
     });
+
+    // Cycle controls — persisted across sessions, don't reload score on change
+    // (the cycle only affects playback scheduling, not the rendered notation).
+    const cycleModeSel = document.getElementById('cycle-mode');
+    const cycleBarsInp = document.getElementById('cycle-bars');
+    try {
+      const savedCycle = JSON.parse(localStorage.getItem('practice_cycle') || '{}');
+      if (savedCycle.mode && cycleModeSel) cycleModeSel.value = savedCycle.mode;
+      if (savedCycle.bars && cycleBarsInp) cycleBarsInp.value = savedCycle.bars;
+    } catch (e) { /* ignore */ }
+    const saveCycle = () => {
+      try {
+        localStorage.setItem('practice_cycle', JSON.stringify({
+          mode: cycleModeSel ? cycleModeSel.value : 'off',
+          bars: cycleBarsInp ? parseInt(cycleBarsInp.value, 10) || 12 : 12,
+        }));
+      } catch (e) { /* ignore */ }
+    };
+    if (cycleModeSel) cycleModeSel.addEventListener('change', saveCycle);
+    if (cycleBarsInp) cycleBarsInp.addEventListener('input', saveCycle);
     document.getElementById('tempo').addEventListener('input', (e) => {
       e.target.dataset.userSet = '1';
     });

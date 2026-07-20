@@ -73,6 +73,17 @@
                 <option value="6">Up tritone</option>
                 <option value="7">Up P5</option>
               </select>
+              <label>Cycle</label>
+              <select id="cycle-mode" class="input" title="Play the exercise repeated across multiple keys">
+                <option value="off">Off</option>
+                <option value="chromatic">Chromatic (+1 each bar)</option>
+                <option value="min3">Minor 3rds (+3 each bar)</option>
+                <option value="4ths">In 4ths (+5 each bar)</option>
+                <option value="5ths">In 5ths (+7 each bar)</option>
+              </select>
+              <label>Bars</label>
+              <input id="cycle-bars" type="number" class="input" min="1" max="24" value="12"
+                     title="Number of repetitions (how many bars to add)" style="width:70px">
             </div>
             <div class="control-row">
               <label>Tempo</label>
