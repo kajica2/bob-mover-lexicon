@@ -7817,5 +7817,43 @@
       }
     ],
     "pages_used": 83
-  }
+  },
+  "sections_defined": [
+    {
+      "id": "1A",
+      "name": "Chromatic"
+    },
+    {
+      "id": "1B",
+      "name": "Scalic"
+    },
+    {
+      "id": "1C",
+      "name": "Chords/Arpeggios"
+    },
+    {
+      "id": "2",
+      "name": "Whole Tone / Augmented / Major 3rds"
+    },
+    {
+      "id": "3",
+      "name": "Diminished / Minor 3rds"
+    },
+    {
+      "id": "4",
+      "name": "Cyclic / Progressions"
+    },
+    {
+      "id": "5",
+      "name": "Tritones"
+    },
+    {
+      "id": "6",
+      "name": "Dominant 7ths"
+    },
+    {
+      "id": "7",
+      "name": "Quartals"
+    }
+  ]
 }

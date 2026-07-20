@@ -670,3 +670,40 @@ h1, h2, h3, h4 {
   .filter-bar { flex-direction: column; align-items: stretch; }
   .picker-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Section name in exercise card meta */
+.ex-section {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ex-section .ex-section-name {
+  color: var(--ink-500);
+  font-weight: 400;
+  font-size: 11px;
+}
+.ex-row1, .ex-row2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ex-row2 {
+  margin-top: 2px;
+}
+
+/* Section chip with full name */
+.chip-count {
+  display: inline-block;
+  margin-left: 4px;
+  background: rgba(0, 0, 0, 0.08);
+  color: inherit;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+}
+.chip.active .chip-count {
+  background: rgba(255, 255, 255, 0.25);
+}

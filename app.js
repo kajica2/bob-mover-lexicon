@@ -223,9 +223,11 @@
           <div class="select-dot">${isSel ? '✓' : '+'}</div>
         </div>
         <div class="ex-meta">
-          <div>
+          <div class="ex-row1">
             <span class="ex-num">#${e.id}</span>
-            <span class="ex-section">§${e.section}</span>
+            <span class="ex-section">§${e.section} <span class="ex-section-name">${sectionName(e.section)}</span></span>
+          </div>
+          <div class="ex-row2">
             <span class="ex-page">p.${e.page}</span>
             <span class="ex-status" data-ex-status="${e.id}"></span>
           </div>
@@ -238,6 +240,22 @@
         </div>
       </div>
     `;
+  }
+
+  // Map section id (e.g. '1A', '4') to a human-readable name
+  const SECTION_NAMES = {
+    '1A': 'Chromatic',
+    '1B': 'Scalic',
+    '1C': 'Chords / Arpeggios',
+    '2':  'Whole Tone / Augmented / M3rds',
+    '3':  'Diminished / Minor 3rds',
+    '4':  'Cyclic / Progressions',
+    '5':  'Tritones',
+    '6':  'Dominant 7ths',
+    '7':  'Quartals',
+  };
+  function sectionName(id) {
+    return SECTION_NAMES[id] || '';
   }
 
   function computeFiltered() {
@@ -410,12 +428,19 @@
   // ===== Section chips =====
   function renderSectionChips() {
     const container = document.getElementById('section-chips');
+    // Compute counts per section
+    const _counts = {};
+    state.exercises.forEach((e) => { _counts[e.section] = (_counts[e.section] || 0) + 1; });
     container.innerHTML =
       `<span style="color: var(--ink-500); font-size: 13px; margin-right: 4px;">Sections:</span>` +
       state.sections
         .map(
-          (s) =>
-            `<button class="chip ${state.activeSections.has(s.section) ? 'active' : ''}" data-section="${s.section}" data-target="browse">${s.section} · ${s.count || 0}</button>`
+          (s) => {
+            const id = s.id || s.section;
+            const name = s.name || '';
+            const count = s.count != null ? s.count : (_counts[id] || 0);
+            return `<button class="chip ${state.activeSections.has(id) ? 'active' : ''}" data-section="${id}" data-target="browse"><strong>§${id}</strong>${name ? ' · ' + escapeHtml(name) : ''} <span class="chip-count">${count}</span></button>`;
+          }
         )
         .join('');
     container.querySelectorAll('[data-target="browse"]').forEach((btn) => {
@@ -431,10 +456,16 @@
 
   function renderSheetSectionChips() {
     const container = document.getElementById('sheet-section-chips');
+    const _counts2 = {};
+    state.exercises.forEach((e) => { _counts2[e.section] = (_counts2[e.section] || 0) + 1; });
     container.innerHTML = state.sections
       .map(
-        (s) =>
-          `<button class="chip ${state.sheetActiveSections.has(s.section) ? 'active' : ''}" data-section="${s.section}">${s.section} · ${s.count || 0}</button>`
+        (s) => {
+          const id = s.id || s.section;
+          const name = s.name || '';
+          const count = s.count != null ? s.count : (_counts2[id] || 0);
+          return `<button class="chip ${state.sheetActiveSections.has(id) ? 'active' : ''}" data-section="${id}"><strong>§${id}</strong>${name ? ' · ' + escapeHtml(name) : ''} <span class="chip-count">${count}</span></button>`;
+        }
       )
       .join('');
     container.querySelectorAll('[data-section]').forEach((btn) => {
@@ -451,7 +482,11 @@
   function renderSectionButtons() {
     const container = document.getElementById('section-buttons');
     container.innerHTML = state.sections
-      .map((s) => `<button class="btn btn-ghost" data-section="${s.section}">+3 from §${s.section}</button>`)
+      .map((s) => {
+        const id = s.id || s.section;
+        const name = s.name || '';
+        return `<button class="btn btn-ghost" data-section="${id}">+3 from §${id}${name ? ' ' + escapeHtml(name) : ''}</button>`;
+      })
       .join('');
     container.querySelectorAll('[data-section]').forEach((btn) => {
       btn.addEventListener('click', () => {
