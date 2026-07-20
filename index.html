@@ -122,6 +122,28 @@
             <div class="selected-list scrollable" id="selected-list"></div>
           </div>
 
+          <div class="card">
+            <h3>Transpose across all keys</h3>
+            <p class="hint">Generate a sheet with one exercise rendered 12 times — once in each key.</p>
+            <div class="form-row">
+              <label>Mode</label>
+              <select id="opt-allkeys-mode" class="input">
+                <option value="chromatic">Chromatic (C, C#, D … B)</option>
+                <option value="min3-cycle5">Minor 3rds, cycle of 5ths (C, G, D, A …)</option>
+              </select>
+            </div>
+            <label class="checkbox">
+              <input type="checkbox" id="opt-allkeys-flats"> Prefer flats (Db vs C#)
+            </label>
+            <button id="generate-allkeys" class="btn btn-primary btn-block" disabled>
+              Generate 12-Key Sheet
+            </button>
+            <a id="download-allkeys-link" class="btn btn-secondary btn-block" style="display:none" download>
+              ↓ Download 12-Key PDF
+            </a>
+            <p id="allkeys-status" class="hint"></p>
+          </div>
+
           <button id="generate-pdf" class="btn btn-primary btn-block" disabled>
             Generate PDF
           </button>

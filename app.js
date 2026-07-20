@@ -69,6 +69,7 @@
     });
     document.getElementById('sheet-clear').addEventListener('click', clearSheetSelection);
     document.getElementById('generate-pdf').addEventListener('click', generatePdf);
+    document.getElementById('generate-allkeys').addEventListener('click', generateAllKeysPdf);
 
     // Quick add buttons
     document.querySelectorAll('[data-add-random]').forEach((btn) => {
@@ -364,7 +365,8 @@
     }
 
     document.getElementById('generate-pdf').disabled = state.sheetSelected.length === 0;
-  }
+    document.getElementById('generate-allkeys').disabled = state.sheetSelected.length === 0;
+    }
 
   function moveInSheet(idx, delta) {
     const j = idx + delta;
@@ -543,6 +545,66 @@
     } finally {
       btn.disabled = false;
       btn.textContent = 'Generate PDF';
+    }
+  }
+
+  // ===== All-keys PDF generation =====
+  async function generateAllKeysPdf() {
+    if (state.sheetSelected.length === 0) return;
+    if (state.sheetSelected.length > 10) {
+      alert('Max 10 exercises for the all-keys sheet (12 pages each).');
+      return;
+    }
+    const btn = document.getElementById('generate-allkeys');
+    const status = document.getElementById('allkeys-status');
+    const download = document.getElementById('download-allkeys-link');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = 'Generating…';
+    download.style.display = 'none';
+    status.textContent = '';
+
+    try {
+      const mode = document.getElementById('opt-allkeys-mode').value;
+      const preferFlats = document.getElementById('opt-allkeys-flats').checked;
+      const title = document.getElementById('sheet-title').value || 'Practice Sheet';
+      const modeLabel = mode === 'chromatic'
+        ? 'All 12 Keys (Chromatic)'
+        : 'All 12 Keys (m3 Cycle of 5ths)';
+      const subtitle = document.getElementById('sheet-subtitle').value || modeLabel;
+
+      status.textContent = `Rendering ${state.sheetSelected.length} × 12 = ${state.sheetSelected.length * 12} pages…`;
+
+      const res = await fetch('api/sheet/all-keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: state.sheetSelected,
+          mode,
+          preferFlats,
+          title: title + ' — ' + modeLabel,
+          subtitle,
+          includeNotes: true,
+          includeTitlePage: true,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        status.textContent = 'Error: ' + (err.error || 'PDF generation failed');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      download.href = url;
+      download.download = title.replace(/\s+/g, '_') + '-12keys.pdf';
+      download.style.display = '';
+      download.textContent = '↓ Download 12-Key PDF';
+      status.textContent = `Done — ${state.sheetSelected.length * 12} pages ready.`;
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
     }
   }
 

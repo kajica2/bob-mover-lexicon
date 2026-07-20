@@ -17,55 +17,168 @@
   };
 
   // ===== Audio engine =====
+  // A richer synth: 2-op FM (carrier + modulator), lowpass filter envelope,
+  // vibrato, and a feedback-delay for ambience. Master gain controls volume.
+
   function initAudio() {
     if (state.audioCtx) return state.audioCtx;
-    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    state.audioCtx = new Ctx();
+
+    // Master gain (volume slider writes here)
+    state.masterGain = state.audioCtx.createGain();
+    state.masterGain.gain.value = 0.5;
+
+    // Soft compressor to keep peaks tame
+    state.compressor = state.audioCtx.createDynamicsCompressor();
+    state.compressor.threshold.value = -18;
+    state.compressor.knee.value = 12;
+    state.compressor.ratio.value = 4;
+    state.compressor.attack.value = 0.003;
+    state.compressor.release.value = 0.18;
+
+    // Stereo delay (ambience)
+    state.delayL = state.audioCtx.createDelay(1.0);
+    state.delayR = state.audioCtx.createDelay(1.0);
+    state.delayL.delayTime.value = 0.21;
+    state.delayR.delayTime.value = 0.27;
+    state.delayFB = state.audioCtx.createGain();
+    state.delayFB.gain.value = 0.28;
+    const merger = state.audioCtx.createChannelMerger(2);
+    state.delayL.connect(merger, 0, 0);
+    state.delayR.connect(merger, 0, 1);
+    state.delayL.connect(state.delayFB);
+    state.delayR.connect(state.delayFB);
+    state.delayFB.connect(state.delayL);
+    state.delayFB.connect(state.delayR);
+    state.delayOut = state.audioCtx.createGain();
+    state.delayOut.gain.value = 0.22;
+    merger.connect(state.delayOut);
+
+    // Wire master chain
+    state.masterGain.connect(state.compressor);
+    state.compressor.connect(state.audioCtx.destination);
+    state.delayOut.connect(state.compressor);
+
     return state.audioCtx;
   }
 
-  function playNote(midi, duration = 0.5, time = null) {
+  function playNote(midi, duration = 0.5, time = null, velocity = 0.85) {
     if (!state.audioCtx) return;
     const ctx = state.audioCtx;
     const t = time !== null ? time : ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    // Use a richer sound: triangle wave with envelope
-    osc.type = 'triangle';
-    osc.frequency.value = midiToFreq(midi);
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(0.3, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(t);
-    osc.stop(t + duration);
+    const freq = midiToFreq(midi);
+
+    // ----- Carrier (triangle — woody, sax-ish) -----
+    const carrier = ctx.createOscillator();
+    carrier.type = 'triangle';
+    carrier.frequency.value = freq;
+
+    // ----- Modulator (sine, octave up, ratio * index = FM brightness) -----
+    const mod = ctx.createOscillator();
+    mod.type = 'sine';
+    mod.frequency.value = freq * 2;
+    const modGain = ctx.createGain();
+    // Modulation index (FM depth). Higher = brighter/harmonically richer.
+    modGain.gain.value = freq * 1.5;
+    mod.connect(modGain);
+    modGain.connect(carrier.frequency);
+
+    // ----- Sub-oscillator for body (one octave below) -----
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.value = freq * 0.5;
+    const subGain = ctx.createGain();
+    subGain.gain.value = 0.35;
+    sub.connect(subGain);
+
+    // ----- Mix carrier + sub -----
+    const mix = ctx.createGain();
+    mix.gain.value = 1.0;
+    carrier.connect(mix);
+    subGain.connect(mix);
+
+    // ----- Lowpass filter with envelope (mimics breath/articulation) -----
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.value = 4;
+    filter.frequency.setValueAtTime(800, t);
+    filter.frequency.linearRampToValueAtTime(Math.min(freq * 8, 6000), t + 0.04);
+    filter.frequency.exponentialRampToValueAtTime(Math.max(freq * 1.5, 600), t + duration);
+
+    // ----- Amp envelope -----
+    const amp = ctx.createGain();
+    const peak = 0.32 * velocity;
+    amp.gain.setValueAtTime(0, t);
+    amp.gain.linearRampToValueAtTime(peak, t + 0.015);
+    amp.gain.linearRampToValueAtTime(peak * 0.7, t + 0.12); // slight sustain dip
+    amp.gain.setValueAtTime(peak * 0.7, t + Math.max(0.12, duration - 0.05));
+    amp.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+    // ----- Vibrato (LFO on carrier frequency, kicks in after 200ms) -----
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 5.5; // ~5.5 Hz vibrato
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.setValueAtTime(0, t);
+    lfoGain.gain.linearRampToValueAtTime(freq * 0.012, t + 0.25);
+    lfoGain.gain.setValueAtTime(freq * 0.012, t + Math.max(0.25, duration - 0.1));
+    lfoGain.gain.linearRampToValueAtTime(0, t + duration);
+    lfo.connect(lfoGain);
+    lfoGain.connect(carrier.frequency);
+
+    // ----- Wiring -----
+    mix.connect(filter);
+    filter.connect(amp);
+    // Dry to master
+    amp.connect(state.masterGain);
+    // Wet to delay taps
+    const wetTap = ctx.createGain();
+    wetTap.gain.value = 0.35;
+    amp.connect(wetTap);
+    wetTap.connect(state.delayL);
+    wetTap.connect(state.delayR);
+
+    // Start/stop
+    carrier.start(t);
+    mod.start(t);
+    sub.start(t);
+    lfo.start(t);
+    carrier.stop(t + duration + 0.05);
+    mod.stop(t + duration + 0.05);
+    sub.stop(t + duration + 0.05);
+    lfo.stop(t + duration + 0.05);
   }
 
   function midiToFreq(midi) {
     return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
-  function click(t = null) {
+  function click(t = null, accent = false) {
     if (!state.audioCtx) return;
     const ctx = state.audioCtx;
     const now = t !== null ? t : ctx.currentTime;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'square';
-    osc.frequency.value = 1000;
+    osc.frequency.value = accent ? 1500 : 1000;
+    const peak = accent ? 0.22 : 0.13;
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.15, now + 0.001);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    gain.gain.linearRampToValueAtTime(peak, now + 0.001);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(state.masterGain);
     osc.start(now);
     osc.stop(now + 0.05);
   }
 
   function setVolume(v) {
-    if (state.audioCtx) {
-      // Update master gain
-      // For simplicity, each note uses fixed 0.3 * v/100
+    const vol = Math.max(0, Math.min(100, v)) / 100;
+    if (state.masterGain) {
+      // Smooth ramp to avoid clicks
+      const ctx = state.audioCtx;
+      state.masterGain.gain.cancelScheduledValues(ctx.currentTime);
+      state.masterGain.gain.setTargetAtTime(vol, ctx.currentTime, 0.02);
     }
   }
 
@@ -155,11 +268,15 @@
       playNote(n.midi, n.duration * secondsPerBeat * 0.95, t);
     });
 
-    // Metronome on beat 1 of each measure (every 4 beats)
+    // Metronome — accent on beat 1 of each measure
     if (useMetronome) {
       const totalBeats = Math.max(...notes.map(n => n.beat)) + 4;
       for (let beat = 0; beat <= totalBeats; beat += 4) {
-        click(startTime + beat * secondsPerBeat);
+        click(startTime + beat * secondsPerBeat, true);   // accent
+        // Optional downbeat clicks for beats 2/3/4
+        for (let sub = 1; sub < 4; sub++) {
+          click(startTime + (beat + sub) * secondsPerBeat, false);
+        }
       }
     }
 
@@ -473,7 +590,7 @@
     document.getElementById('btn-play').addEventListener('click', play);
     document.getElementById('btn-stop').addEventListener('click', stop);
     document.getElementById('volume').addEventListener('input', (e) => {
-      setVolume(e.target.value / 100);
+      setVolume(e.target.value);
     });
     document.getElementById('btn-log').addEventListener('click', logPractice);
 
