@@ -602,7 +602,33 @@
 
   async function loadExercise(id) {
     stop(); // stop any playing
+    if (state.recording && state.recording.active) {
+      // Auto-stop the recording if user navigates away
+      if (recordBtn) recordBtn.click();
+    }
     state.currentId = id;
+    // Check favorite status
+    if (state.currentId) {
+      try {
+        const r = await fetch(`../api/favorites/${id}`);
+        if (r.ok) {
+          const d = await r.json();
+          if (starBtn) {
+            if (d.favorited) {
+              starBtn.classList.add('favorited');
+              starBtn.textContent = '★';
+              starBtn.title = 'Remove from favorites';
+            } else {
+              starBtn.classList.remove('favorited');
+              starBtn.textContent = '☆';
+              starBtn.title = 'Add to favorites';
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Favorite check failed:', e);
+      }
+    }
     const ex = state.byId[id];
     if (!ex) {
       console.error('Exercise not found:', id);
@@ -658,6 +684,25 @@
       } else {
         recentEl.innerHTML = `<h4 style="font-size: 13px; margin: 8px 0 4px; color: var(--ink-600);">This exercise:</h4><p class="hint">Not practiced yet.</p>`;
       }
+      // Wire up delete buttons
+      recentEl.querySelectorAll('button.delete-log').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const logId = btn.dataset.logId;
+          if (!confirm('Delete this practice entry?')) return;
+          try {
+            const r = await fetch(`../api/practice/${logId}`, { method: 'DELETE' });
+            if (r.ok) {
+              btn.closest('.recent-item').remove();
+            } else {
+              alert('Failed to delete entry');
+            }
+          } catch (err) {
+            console.error('Delete failed:', err);
+            alert('Delete failed: ' + err.message);
+          }
+        });
+      });
     } catch (e) {
       console.error(e);
     }
@@ -665,13 +710,16 @@
 
   function formatRecentItem(r) {
     const date = new Date(r.practiced_at);
-    const dateStr = date.toLocaleDateString();
+    const dateStr = date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
     const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dur = r.duration_min ? `${r.duration_min}m` : '—';
     return `
-      <div class="recent-item">
+      <div class="recent-item" data-log-id="${r.id}">
         <span class="ri-num">#${r.exercise_id}</span>
         <span class="ri-title">${r.notes || '—'}</span>
-        <span class="ri-meta">${r.tempo_bpm || '—'}bpm · ${dateStr}</span>
+        <span class="ri-meta">${r.tempo_bpm || '—'}bpm · ${dur}</span>
+        <span class="ri-date" title="${r.practiced_at}">${dateStr} ${timeStr}</span>
+        <button class="delete-log" data-log-id="${r.id}" title="Delete this entry">×</button>
       </div>
     `;
   }

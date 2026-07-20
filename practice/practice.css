@@ -324,3 +324,123 @@
   max-width: 100%;
   height: auto;
 }
+
+
+/* Star / favorite button */
+.ex-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.star-btn {
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 28px;
+  line-height: 1;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: #999;
+  transition: all 0.15s;
+}
+.star-btn:hover {
+  border-color: #c8a85a;
+  color: #c8a85a;
+}
+.star-btn.favorited {
+  color: #c8a85a;
+  border-color: #c8a85a;
+  background: rgba(200, 168, 90, 0.08);
+}
+
+/* Record button + timer */
+.btn-record {
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.btn-record:hover { background: #b91c1c; }
+.btn-record.recording {
+  background: white;
+  color: #dc2626;
+  border: 1px solid #dc2626;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.btn-record.recording::before {
+  content: "●";
+  color: #dc2626;
+  animation: blink 1s step-end infinite;
+}
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0.2; }
+}
+.record-timer {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  min-width: 60px;
+}
+
+/* Metronome toggle */
+.btn-metronome {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #374151;
+  transition: all 0.15s;
+}
+.btn-metronome:hover { background: #e5e7eb; }
+.btn-metronome[aria-pressed="true"] {
+  background: #c8a85a;
+  color: white;
+  border-color: #c8a85a;
+}
+.metro-icon { font-size: 16px; }
+
+/* History item with delete button */
+.recent-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.recent-item .ri-meta { font-size: 11px; color: #888; }
+.recent-item .ri-date {
+  font-size: 11px;
+  color: #555;
+  font-weight: 500;
+}
+.recent-item button.delete-log {
+  background: none;
+  border: none;
+  color: #c00;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin-left: auto;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+}
+.recent-item button.delete-log:hover { opacity: 1; }

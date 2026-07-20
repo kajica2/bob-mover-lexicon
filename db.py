@@ -61,6 +61,12 @@ def init_db():
             ON practice_log(practiced_at DESC)
         """)
         c.execute("""
+            CREATE TABLE IF NOT EXISTS favorites (
+                exercise_id INTEGER PRIMARY KEY,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("""
             CREATE TABLE IF NOT EXISTS collections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -101,6 +107,35 @@ def init_db():
                     )
 
 
+# ===== Favorites API =====
+
+def add_favorite(exercise_id):
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT OR IGNORE INTO favorites (exercise_id) VALUES (?)",
+            (exercise_id,),
+        )
+        return c.rowcount > 0
+
+def remove_favorite(exercise_id):
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM favorites WHERE exercise_id = ?", (exercise_id,))
+        return c.rowcount > 0
+
+def is_favorite(exercise_id):
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM favorites WHERE exercise_id = ?", (exercise_id,))
+        return c.fetchone() is not None
+
+def get_favorites():
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT exercise_id, created_at FROM favorites ORDER BY created_at DESC")
+        return [dict(r) for r in c.fetchall()]
+
 # ===== Practice log API =====
 
 def log_practice(exercise_id, tempo_bpm=None, key_signature=None,
@@ -117,6 +152,12 @@ def log_practice(exercise_id, tempo_bpm=None, key_signature=None,
               1 if completed else 0))
         return c.lastrowid
 
+
+def delete_practice_log(log_id):
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM practice_log WHERE id = ?", (log_id,))
+        return c.rowcount > 0
 
 def get_exercise_history(exercise_id, limit=20):
     with _LOCK, get_db() as conn:

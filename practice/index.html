@@ -34,7 +34,10 @@
         <div class="card player-card">
           <div class="player-header">
             <div>
-              <h2 id="ex-num" class="ex-num">#1</h2>
+              <div class="ex-title-row">
+                <h2 id="ex-num" class="ex-num">#1</h2>
+                <button id="btn-favorite" class="star-btn" title="Add to favorites">☆</button>
+              </div>
               <p id="ex-title" class="ex-title">Loading…</p>
               <p class="ex-meta">
                 <span class="chip" id="ex-section">§1A</span>
@@ -43,8 +46,8 @@
               </p>
             </div>
             <div class="player-nav">
-              <button id="btn-prev" class="btn btn-ghost" title="Previous exercise">←</button>
-              <button id="btn-next" class="btn btn-ghost" title="Next exercise">→</button>
+              <button id="btn-prev" class="btn btn-ghost" title="Previous exercise (←)">←</button>
+              <button id="btn-next" class="btn btn-ghost" title="Next exercise (→)">→</button>
             </div>
           </div>
 
@@ -96,6 +99,15 @@
                 <span id="play-label">▶ Play</span>
               </button>
               <button id="btn-stop" class="btn btn-secondary" disabled>⏹ Stop</button>
+            </div>
+            <div class="control-row">
+              <label>Record</label>
+              <button id="btn-record" class="btn btn-record" title="Start a timed practice session">⏺ Record</button>
+              <span id="record-timer" class="record-timer">00:00</span>
+              <button id="metronome-toggle" class="btn-metronome" title="Toggle metronome click" aria-pressed="false">
+                <span class="metro-icon">🎼</span>
+                <span class="metro-label">Metronome</span>
+              </button>
             </div>
             <div class="control-row">
               <label>Volume</label>

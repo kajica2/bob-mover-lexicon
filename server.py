@@ -13,6 +13,7 @@ import http.server
 import io
 import json
 import os
+import re
 import socketserver
 import sys
 import zipfile
@@ -771,6 +772,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        # Check favorite status
+        m_fav_get = re.match(r"^/api/favorites/(\d+)$", path)
+        if m_fav_get:
+            try:
+                eid = int(m_fav_get.group(1))
+            except ValueError:
+                return self.send_json({"error": "Invalid exercise ID"}, 400)
+            return self.send_json({"exercise_id": eid, "favorited": db.is_favorite(eid)})
+        if path == "/api/favorites":
+            return self.send_json({"favorites": db.get_favorites()})
         if path == "/api/collections":
             return self.handle_list_collections()
         if path.startswith("/api/collections/") and path != "/api/collections/":
@@ -789,6 +800,22 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/sheet":
             return self.handle_sheet_api()
+        # Favorite endpoints
+        m_fav = re.match(r"^/api/favorites/(\d+)$", path)
+        if m_fav:
+            try:
+                eid = int(m_fav.group(1))
+            except ValueError:
+                return self.send_json({"error": "Invalid exercise ID"}, 400)
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length else b"{}"
+            except Exception:
+                raw = b"{}"
+            db.add_favorite(eid)
+            return self.send_json({"ok": True, "favorited": True})
+        if path == "/api/favorites":
+            return self.send_json({"favorites": db.get_favorites()})
         if path == "/api/sheet/all-keys":
             return self.handle_sheet_all_keys_api()
         if path.startswith("/api/musicxml/") and path.endswith("/cycle"):
@@ -802,6 +829,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        # Unfavorite
+        m_fav = re.match(r"^/api/favorites/(\d+)$", path)
+        if m_fav:
+            try:
+                eid = int(m_fav.group(1))
+            except ValueError:
+                return self.send_json({"error": "Invalid exercise ID"}, 400)
+            db.remove_favorite(eid)
+            return self.send_json({"ok": True, "favorited": False})
+        # Delete a practice log entry
+        m_log = re.match(r"^/api/practice/(\d+)$", path)
+        if m_log:
+            try:
+                log_id = int(m_log.group(1))
+            except ValueError:
+                return self.send_json({"error": "Invalid log ID"}, 400)
+            if db.delete_practice_log(log_id):
+                return self.send_json({"ok": True})
+            return self.send_json({"error": "Not found"}, 404)
         if path.startswith("/api/collections/") and path != "/api/collections/":
             try:
                 cid = int(path.rsplit("/", 1)[-1])
