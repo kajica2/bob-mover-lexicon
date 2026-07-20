@@ -426,22 +426,11 @@
     const bpm = parseInt(document.getElementById('tempo').value) || 120;
     const secondsPerBeat = 60 / bpm;
 
-    // Apply the Cycle mode (extends the exercise across keys).
-    // Reads from the committed state (set by applyCycle) so the user's
-    // explicit "Apply" press controls playback, not the live dropdown.
-    const instr = (document.getElementById('instrument') || {}).value || 'concert';
-    const cycleMode = state.cycleCommitted ? state.cycleCommitted.mode : 'off';
-    const cycleBars = state.cycleCommitted ? state.cycleCommitted.bars : 1;
-    const { notes, stats } = buildCycleNotes(
-      state.currentScore.notes, cycleMode, cycleBars, instr,
-    );
+    // The cycle is baked into state.currentScore.notes by applyCycle()
+    // (server extended the MusicXML and we re-parsed it). No client-side
+    // cycle manipulation here.
+    const notes = state.currentScore.notes;
     if (notes.length === 0) return;
-    if (stats.dropped > 0) {
-      console.info(
-        `[cycle] ${stats.dropped} note(s) dropped — outside ${instr} range ` +
-        `(${INSTRUMENT_RANGES[instr].min}-${INSTRUMENT_RANGES[instr].max} MIDI)`,
-      );
-    }
 
     const useMetronome = document.getElementById('metronome').checked;
     const startTime = state.audioCtx.currentTime + 0.1;
@@ -803,8 +792,8 @@
       }
     }
 
-    function applyCycle() {
-      if (!state.currentScore) {
+    async function applyCycle() {
+      if (!state.currentId) {
         // No exercise loaded yet — just commit the staged values
         const mode = cycleModeSel ? cycleModeSel.value : 'off';
         const bars = cycleBarsInp ? Math.max(1, Math.min(12, parseInt(cycleBarsInp.value, 10) || 12)) : 1;
@@ -813,17 +802,49 @@
         return;
       }
       const instr = (document.getElementById('instrument') || {}).value || 'concert';
+      const transpose = parseInt((document.getElementById('transpose') || {}).value || '0', 10);
       const mode = cycleModeSel ? cycleModeSel.value : 'off';
       const bars = cycleBarsInp ? Math.max(1, Math.min(12, parseInt(cycleBarsInp.value, 10) || 12)) : 12;
-      const seq = cycleKeySequence(mode);
-      const lastKey = mode === 'off' ? 0 : (seq[Math.min(bars, seq.length) - 1] || 0);
-      const { stats } = buildCycleNotes(state.currentScore.notes, mode, bars, instr);
-      state.cycleCommitted = { mode, bars, key: lastKey, dropped: stats.dropped };
-      // Persist
+      // Disable the Apply button + show pending state
+      if (cycleApplyBtn) {
+        cycleApplyBtn.disabled = true;
+        cycleApplyBtn.textContent = 'Applying…';
+      }
       try {
-        localStorage.setItem('practice_cycle', JSON.stringify({ mode, bars }));
-      } catch (e) { /* ignore */ }
-      updateBadge(state.cycleCommitted);
+        const r = await fetch(`../api/musicxml/${state.currentId}/cycle`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode, bars, instrument: instr, transpose }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ error: r.statusText }));
+          throw new Error(err.error || 'Cycle request failed');
+        }
+        const xml = await r.text();
+        // Re-render the score from the cycled MusicXML. This also re-parses
+        // the notes for playback, so state.currentScore.notes will reflect
+        // the full extended exercise.
+        await renderScore(xml);
+        const seq = cycleKeySequence(mode);
+        const lastKey = mode === 'off' ? 0 : (seq[Math.min(bars, seq.length) - 1] || 0);
+        state.cycleCommitted = { mode, bars, key: lastKey, dropped: 0 };
+        // Persist
+        try {
+          localStorage.setItem('practice_cycle', JSON.stringify({ mode, bars }));
+        } catch (e) { /* ignore */ }
+        updateBadge(state.cycleCommitted);
+      } catch (e) {
+        console.error('Cycle apply failed:', e);
+        if (cycleBadge) {
+          cycleBadge.textContent = 'Apply failed: ' + e.message;
+          cycleBadge.className = 'cycle-badge off';
+        }
+      } finally {
+        if (cycleApplyBtn) {
+          cycleApplyBtn.disabled = false;
+          cycleApplyBtn.textContent = '✓ Apply';
+        }
+      }
     }
 
     try {

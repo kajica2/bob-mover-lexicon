@@ -406,6 +406,99 @@ def transpose_musicxml(mxl_path, semitones):
         return None
 
 
+# Cycle mode -> semitone step per bar
+CYCLE_STEP = {
+    "chromatic": 1,
+    "min3": 3,
+    "4ths": 5,
+    "5ths": 7,
+}
+
+
+def cycle_key_sequence(mode, n=12):
+    """Return the n-semitone offset list for the given cycle mode.
+
+    'chromatic' -> [0,1,2,...,11]
+    'min3'      -> [0,3,6,9,0,3,6,9,0,3,6,9]
+    '4ths'      -> [0,5,10,3,8,1,6,11,4,9,2,7]
+    '5ths'      -> [0,7,2,9,4,11,6,1,8,3,10,5]
+    """
+    if mode == "off" or mode is None:
+        return [0]
+    step = CYCLE_STEP.get(mode)
+    if step is None:
+        return [0]
+    seq, s = [], 0
+    for _ in range(n):
+        seq.append(s)
+        s = (s + step) % 12
+    return seq
+
+
+def cycle_musicxml(mxl_path, mode, bars):
+    """Return MusicXML extended to `bars` copies of the exercise, each
+    transposed by the appropriate cycle key.
+
+    Returns the new XML string, or None on failure.
+    """
+    if not HAS_MUSIC21:
+        return None
+    try:
+        original_xml = extract_musicxml_from_mxl(mxl_path)
+        if not original_xml:
+            return None
+        from music21 import converter
+        base = converter.parse(original_xml, format='musicxml')
+        # Extract all measures from the first part. We operate on the part
+        # so we can transpose by exact semitones and preserve the
+        # original ordering.
+        base_part = base.parts[0] if base.parts else base
+        seq = cycle_key_sequence(mode, max(12, bars))[:bars]
+        if len(seq) < bars:
+            seq = seq + [0] * (bars - len(seq))
+        out = converter.parse(original_xml, format='musicxml')
+        out_part = out.parts[0] if out.parts else out
+        # Strip existing measures — we'll rebuild from the base
+        for m in list(out_part.getElementsByClass('Measure')):
+            out_part.remove(m)
+        # For each cycle iteration, deep-copy the base measures, transpose,
+        # and insert.
+        from music21 import stream as m21stream
+        import copy as _copy
+        for i, shift in enumerate(seq):
+            # Deep-copy the base_part so we don't mutate the original
+            cloned = _copy.deepcopy(base_part)
+            if shift != 0:
+                cloned = cloned.transpose(shift)
+            # Insert each measure into the output part
+            for m in cloned.getElementsByClass('Measure'):
+                out_part.append(m)
+        # Renumber measures sequentially so MusicXML/Verovio don't
+        # see duplicate measure numbers (music21 resets numbering on
+        # append; we want a continuous count 1, 2, 3, ...).
+        measures = list(out_part.getElementsByClass('Measure'))
+        for i, m in enumerate(measures, start=1):
+            m.number = i
+
+        # Re-emit to MusicXML
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.musicxml', delete=False, mode='w') as tmp:
+            tmp_path = tmp.name
+        try:
+            written = out.write('musicxml', fp=tmp_path)
+            with open(written if isinstance(written, str) else tmp_path) as f:
+                return f.read()
+        finally:
+            try:
+                import os as _os
+                _os.unlink(tmp_path)
+            except OSError:
+                pass
+    except Exception as e:
+        print(f"Cycle error: {e}", file=sys.stderr)
+        return None
+
+
 def get_musicxml(exercise_id, transpose_semitones=0):
     """Get MusicXML for an exercise, optionally transposed.
 
@@ -505,6 +598,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_sheet_api()
         if path == "/api/sheet/all-keys":
             return self.handle_sheet_all_keys_api()
+        if path.startswith("/api/musicxml/") and path.endswith("/cycle"):
+            return self.handle_musicxml_cycle(path)
         if path == "/api/practice":
             return self.handle_log_practice()
         if path == "/api/collections":
@@ -554,6 +649,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"PDF gen error: {e}", file=sys.stderr)
             return self.send_json({"error": str(e)}, 500)
+
+    def handle_musicxml_cycle(self, path):
+        """POST /api/musicxml/<id>/cycle  body: { mode, bars, instrument, transpose }
+
+        Returns MusicXML extended to `bars` copies of the exercise, each
+        transposed by the appropriate cycle key (mod-12 sequence).
+        """
+        try:
+            eid = int(path.split("/")[3])
+        except (ValueError, IndexError):
+            return self.send_json({"error": "Invalid exercise ID"}, 400)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            payload = json.loads(raw)
+        except Exception as e:
+            return self.send_json({"error": f"Invalid JSON: {e}"}, 400)
+        mode = payload.get("mode", "off")
+        try:
+            bars = max(1, min(12, int(payload.get("bars", 1))))
+        except (TypeError, ValueError):
+            bars = 1
+        if mode not in ("off", "chromatic", "min3", "4ths", "5ths"):
+            return self.send_json({"error": f"Unknown mode: {mode}"}, 400)
+        mxl_path = MUSICXML_DIR / f"{eid:04d}.mxl"
+        if not mxl_path.exists():
+            return self.send_json({"error": "MusicXML not available"}, 404)
+        if mode == "off" or bars == 1:
+            transpose = int(payload.get("transpose", 0))
+            instrument = payload.get("instrument", "concert")
+            offset = INSTRUMENT_OFFSETS.get(instrument, 0)
+            xml, ctype = get_musicxml(eid, transpose + offset)
+        else:
+            xml, ctype = get_musicxml(eid, 0)
+            if xml is not None:
+                cycled = cycle_musicxml(mxl_path, mode, bars)
+                if cycled is not None:
+                    xml = cycled
+        if xml is None:
+            return self.send_json({"error": "Cycle generation failed"}, 500)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        body = xml.encode("utf-8") if isinstance(xml, str) else xml
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def handle_sheet_all_keys_api(self):
         """Generate a PDF with each exercise rendered in all 12 keys.
