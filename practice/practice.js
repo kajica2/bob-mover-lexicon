@@ -14,6 +14,11 @@
     isPlaying: false,
     playInterval: null,
     metronomeInterval: null,
+    rawXml: null,
+    zoomScale: 50,
+    zoomPage: 1,
+    zoomPageCount: 1,
+    fullPage: false,
   };
 
   // ===== Audio engine =====
@@ -476,6 +481,52 @@
   }
 
   // ===== Verovio rendering =====
+  function renderAtScale() {
+    if (!state.verovio || !state.rawXml) return;
+    const container = state.fullPage
+      ? document.getElementById('fullpage-score')
+      : document.getElementById('score-container');
+    if (!container) return;
+    try {
+      const opts = {
+        scale: state.zoomScale,
+        adjustPageHeight: true,
+        breaks: 'auto',
+      };
+      if (state.fullPage) {
+        opts.pageWidth = 1800;
+        opts.pageHeight = 2400;
+      }
+      state.verovio.setOptions(opts);
+      state.verovio.loadData(state.rawXml);
+      try {
+        state.zoomPageCount = state.verovio.getPageCount();
+      } catch (e) {
+        state.zoomPageCount = 1;
+      }
+      if (state.zoomPage > state.zoomPageCount) {
+        state.zoomPage = state.zoomPageCount;
+      }
+      const svg = state.verovio.renderToSVG(state.zoomPage, {});
+      container.innerHTML = svg;
+      const pageEl = document.getElementById('zoom-page-indicator');
+      if (pageEl) {
+        pageEl.textContent = state.zoomPageCount > 1
+          ? `${state.zoomPage} / ${state.zoomPageCount}`
+          : '';
+      }
+      const labelEl = document.getElementById('zoom-label');
+      if (labelEl) labelEl.textContent = state.zoomScale + '%';
+      const prevBtn = document.getElementById('zoom-prev-page');
+      const nextBtn = document.getElementById('zoom-next-page');
+      if (prevBtn) prevBtn.disabled = state.zoomPage <= 1;
+      if (nextBtn) nextBtn.disabled = state.zoomPage >= state.zoomPageCount;
+    } catch (e) {
+      console.error('Verovio render error:', e);
+      container.innerHTML = `<div class="score-loading">Failed to render notation: ${e.message}</div>`;
+    }
+  }
+
   async function renderScore(xmlString) {
     const container = document.getElementById('score-container');
     if (!state.verovio) {
@@ -486,25 +537,47 @@
         return;
       }
     }
-    try {
-      state.verovio.setOptions({
-        scale: 50,
-        adjustPageHeight: true,
-        breaks: 'auto',
-      });
-      state.verovio.loadData(xmlString);
-      const svg = state.verovio.renderToSVG(1, {});
-      container.innerHTML = svg;
-      // Parse notes for playback
-      state.currentScore = parseMusicXML(xmlString);
-      // Update tempo field with detected BPM
-      if (state.currentScore.bpm && !document.getElementById('tempo').dataset.userSet) {
-        document.getElementById('tempo').value = Math.round(state.currentScore.bpm);
-      }
-    } catch (e) {
-      console.error('Verovio render error:', e);
-      container.innerHTML = `<div class="score-loading">Failed to render notation: ${e.message}</div>`;
+    state.rawXml = xmlString;
+    state.zoomPage = 1;
+    renderAtScale();
+    state.currentScore = parseMusicXML(xmlString);
+    if (state.currentScore.bpm && !document.getElementById('tempo').dataset.userSet) {
+      document.getElementById('tempo').value = Math.round(state.currentScore.bpm);
     }
+  }
+
+  function zoomIn() {
+    state.zoomScale = Math.min(120, state.zoomScale + 10);
+    renderAtScale();
+  }
+  function zoomOut() {
+    state.zoomScale = Math.max(20, state.zoomScale - 10);
+    renderAtScale();
+  }
+  function pagePrev() {
+    if (state.zoomPage > 1) {
+      state.zoomPage--;
+      renderAtScale();
+    }
+  }
+  function pageNext() {
+    if (state.zoomPage < state.zoomPageCount) {
+      state.zoomPage++;
+      renderAtScale();
+    }
+  }
+  function toggleFullPage() {
+    state.fullPage = !state.fullPage;
+    const overlay = document.getElementById('fullpage-overlay');
+    if (overlay) {
+      overlay.style.display = state.fullPage ? 'flex' : 'none';
+      if (state.fullPage) renderAtScale();
+    }
+  }
+  function closeFullPage() {
+    state.fullPage = false;
+    const overlay = document.getElementById('fullpage-overlay');
+    if (overlay) overlay.style.display = 'none';
   }
 
   // ===== Data loading =====
@@ -868,6 +941,35 @@
     document.getElementById('volume').addEventListener('input', (e) => {
       setVolume(e.target.value);
     });
+
+    // Zoom + page controls
+    const zOut = document.getElementById('zoom-out');
+    const zIn = document.getElementById('zoom-in');
+    const pPrev = document.getElementById('zoom-prev-page');
+    const pNext = document.getElementById('zoom-next-page');
+    const fpOpen = document.getElementById('fullpage-open');
+    const fpClose = document.getElementById('fp-close');
+    const fpZOut = document.getElementById('fp-zoom-out');
+    const fpZIn = document.getElementById('fp-zoom-in');
+    const fpPPrev = document.getElementById('fp-prev-page');
+    const fpPNext = document.getElementById('fp-next-page');
+    if (zOut) zOut.addEventListener('click', zoomOut);
+    if (zIn) zIn.addEventListener('click', zoomIn);
+    if (pPrev) pPrev.addEventListener('click', pagePrev);
+    if (pNext) pNext.addEventListener('click', pageNext);
+    if (fpOpen) fpOpen.addEventListener('click', toggleFullPage);
+    if (fpClose) fpClose.addEventListener('click', closeFullPage);
+    if (fpZOut) fpZOut.addEventListener('click', zoomOut);
+    if (fpZIn) fpZIn.addEventListener('click', zoomIn);
+    if (fpPPrev) fpPPrev.addEventListener('click', pagePrev);
+    if (fpPNext) fpPNext.addEventListener('click', pageNext);
+    // Sync the fullpage zoom label to the main one
+    const mainZ = document.getElementById('zoom-label');
+    const fpZ = document.getElementById('fp-zoom-label');
+    if (mainZ && fpZ) {
+      new MutationObserver(() => { fpZ.textContent = mainZ.textContent; })
+        .observe(mainZ, { childList: true, characterData: true, subtree: true });
+    }
     document.getElementById('btn-log').addEventListener('click', logPractice);
 
     // Keyboard shortcuts
@@ -877,11 +979,41 @@
         e.preventDefault();
         state.isPlaying ? stop() : play();
       } else if (e.key === 'ArrowLeft') {
-        document.getElementById('btn-prev').click();
+        // Shift+Left = previous score page, plain Left = previous exercise
+        if (e.shiftKey) { e.preventDefault(); pagePrev(); }
+        else document.getElementById('btn-prev').click();
       } else if (e.key === 'ArrowRight') {
+        if (e.shiftKey) { e.preventDefault(); pageNext(); }
+        else document.getElementById('btn-next').click();
+      } else if (e.key === 'PageUp') {
+        e.preventDefault();
+        document.getElementById('btn-prev').click();
+      } else if (e.key === 'PageDown') {
+        e.preventDefault();
         document.getElementById('btn-next').click();
+      } else if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        zoomIn();
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        zoomOut();
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        toggleFullPage();
+      } else if (e.key === 'Escape') {
+        if (state.fullPage) { e.preventDefault(); closeFullPage(); }
       } else if (e.key === 'l' || e.key === 'L') {
         logPractice();
+      } else if (e.key === 'h' || e.key === 'H') {
+        // h = home (first exercise)
+        e.preventDefault();
+        if (state.exercises.length > 0) loadExercise(state.exercises[0].id);
+      } else if (e.key === 'e' || e.key === 'E') {
+        // e = end (last exercise)
+        e.preventDefault();
+        if (state.exercises.length > 0) {
+          loadExercise(state.exercises[state.exercises.length - 1].id);
+        }
       }
     });
 

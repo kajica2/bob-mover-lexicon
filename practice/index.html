@@ -108,11 +108,26 @@
             </div>
           </div>
 
+          <!-- Zoom/page controls -->
+          <div class="zoom-toolbar">
+            <button id="zoom-out" class="btn btn-ghost btn-sm" title="Zoom out (-)">−</button>
+            <span id="zoom-label" class="zoom-label">50%</span>
+            <button id="zoom-in" class="btn btn-ghost btn-sm" title="Zoom in (+)">+</button>
+            <span class="zoom-sep">|</span>
+            <button id="zoom-prev-page" class="btn btn-ghost btn-sm" title="Previous page (Shift+←)" disabled>◀</button>
+            <span id="zoom-page-indicator" class="zoom-page-indicator"></span>
+            <button id="zoom-next-page" class="btn btn-ghost btn-sm" title="Next page (Shift+→)" disabled>▶</button>
+            <span class="zoom-sep">|</span>
+            <button id="fullpage-open" class="btn btn-secondary btn-sm" title="Full-page view (F)">⛶ Full Page</button>
+            <span class="zoom-hint">Keys: ←→ prev/next ex · Shift+←→ page · +/− zoom · F fullscreen</span>
+          </div>
+
           <!-- Score display -->
           <div id="score-container" class="score-container">
             <div class="score-loading">Loading notation…</div>
           </div>
-        </div>
+
+
 
         <!-- Log practice -->
         <div class="card log-card">
@@ -176,5 +191,20 @@
 
   <script src="vendor/verovio-toolkit.js"></script>
   <script src="practice.js"></script>
+  <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
+  <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
+    <div class="fullpage-toolbar">
+      <button id="fp-zoom-out" class="btn btn-ghost btn-sm" title="Zoom out (-)">−</button>
+      <span id="fp-zoom-label" class="zoom-label">50%</span>
+      <button id="fp-zoom-in" class="btn btn-ghost btn-sm" title="Zoom in (+)">+</button>
+      <span class="zoom-sep">|</span>
+      <button id="fp-prev-page" class="btn btn-ghost btn-sm" disabled>◀</button>
+      <span id="fp-page-indicator" class="zoom-page-indicator"></span>
+      <button id="fp-next-page" class="btn btn-ghost btn-sm" disabled>▶</button>
+      <span class="zoom-sep">|</span>
+      <button id="fp-close" class="btn btn-secondary btn-sm" title="Close (Esc)">✕ Close</button>
+    </div>
+    <div id="fullpage-score" class="fullpage-score"></div>
+  </div>
 </body>
 </html>

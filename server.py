@@ -499,6 +499,58 @@ def cycle_musicxml(mxl_path, mode, bars):
         return None
 
 
+def inject_title_into_musicxml(xml_string, exercise_id, title):
+    """Inject <work><work-title>...</work-title></work> into the score so
+    Verovio renders the exercise name at the top.
+    """
+    import re
+    if not title:
+        title = f"Exercise {exercise_id}"
+    safe = re.sub(r"\s+", " ", str(title)).strip()[:80]
+    work_block = f'<work><work-title>{safe}</work-title></work>'
+    if "<work>" in xml_string:
+        if "<work-title>" in xml_string:
+            xml_string = re.sub(
+                r"<work-title>[^<]*</work-title>",
+                f"<work-title>{safe}</work-title>",
+                xml_string, count=1,
+            )
+        else:
+            xml_string = xml_string.replace(
+                "<work>", f"<work><work-title>{safe}</work-title>", 1,
+            )
+        return xml_string
+    if "<score-partwise" in xml_string:
+        return re.sub(
+            r"<score-partwise(\s[^>]*)?>", f"<score-partwise\\1>{work_block}",
+            xml_string, count=1,
+        )
+    if "<score-timewise" in xml_string:
+        return re.sub(
+            r"<score-timewise(\s[^>]*)?>", f"<score-timewise\\1>{work_block}",
+            xml_string, count=1,
+        )
+    return xml_string
+
+
+def get_musicxml_with_title(exercise_id, transpose_semitones=0):
+    """Like get_musicxml, but with the exercise title injected into the
+    MusicXML <work> element so Verovio renders it at the top.
+    """
+    xml, ctype = get_musicxml(exercise_id, transpose_semitones)
+    if xml is None:
+        return None, None
+    try:
+        with open(EXERCISES_JSON) as f:
+            data = json.load(f)
+        ex = next((e for e in data["exercises"] if e["id"] == exercise_id), None)
+        if ex:
+            xml = inject_title_into_musicxml(xml, exercise_id, ex.get("title", ""))
+    except Exception:
+        pass
+    return xml, ctype
+
+
 def get_musicxml(exercise_id, transpose_semitones=0):
     """Get MusicXML for an exercise, optionally transposed.
 
@@ -566,7 +618,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             instrument = qs.get("instrument", ["concert"])[0]
             offset = INSTRUMENT_OFFSETS.get(instrument, 0)
             semitones = transpose + offset
-            xml, ctype = get_musicxml(eid, semitones)
+            xml, ctype = get_musicxml_with_title(eid, semitones)
             if xml is None:
                 return self.send_json({"error": "MusicXML not available for this exercise"}, 404)
             self.send_response(200)
@@ -687,6 +739,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 cycled = cycle_musicxml(mxl_path, mode, bars)
                 if cycled is not None:
                     xml = cycled
+        # Inject the exercise title into the returned XML (cycled or not)
+        if xml is not None:
+            try:
+                with open(EXERCISES_JSON) as f:
+                    _ex_data = json.load(f)
+                _ex = next((e for e in _ex_data["exercises"] if e["id"] == eid), None)
+                xml = inject_title_into_musicxml(
+                    xml, eid, _ex.get("title", "") if _ex else "",
+                )
+            except Exception:
+                xml = inject_title_into_musicxml(xml, eid, "")
         if xml is None:
             return self.send_json({"error": "Cycle generation failed"}, 500)
         self.send_response(200)
