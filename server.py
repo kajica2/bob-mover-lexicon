@@ -527,14 +527,25 @@ def cycle_musicxml(mxl_path, mode, bars):
         return None
 
 
-def inject_title_into_musicxml(xml_string, exercise_id, title):
+def inject_title_into_musicxml(xml_string, exercise_id, title, section=None):
     """Inject <work><work-title>...</work-title></work> into the score so
     Verovio renders the exercise name at the top.
+
+    The displayed title is composed as:
+      <section> · #<id> · <exercise title>
+    e.g. "1A · #5 · Chromatic ascending triplets, descending in half steps"
     """
     import re
     if not title:
         title = f"Exercise {exercise_id}"
-    safe = re.sub(r"\s+", " ", str(title)).strip()[:80]
+    safe_title = re.sub(r"\s+", " ", str(title)).strip()
+    prefix_parts = []
+    if section:
+        prefix_parts.append(f"§{section}")
+    prefix_parts.append(f"#{exercise_id}")
+    prefix = " · ".join(prefix_parts) + " · "
+    full = (prefix + safe_title)[:120]
+    safe = full  # already collapsed above
     work_block = f'<work><work-title>{safe}</work-title></work>'
     if "<work>" in xml_string:
         if "<work-title>" in xml_string:
@@ -685,7 +696,9 @@ def get_musicxml_with_title(exercise_id, transpose_semitones=0):
             data = json.load(f)
         ex = next((e for e in data["exercises"] if e["id"] == exercise_id), None)
         if ex:
-            xml = inject_title_into_musicxml(xml, exercise_id, ex.get("title", ""))
+            xml = inject_title_into_musicxml(
+                xml, exercise_id, ex.get("title", ""), ex.get("section"),
+            )
     except Exception:
         pass
     xml = strip_score_junk(xml)
@@ -934,9 +947,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 _ex = next((e for e in _ex_data["exercises"] if e["id"] == eid), None)
                 xml = inject_title_into_musicxml(
                     xml, eid, _ex.get("title", "") if _ex else "",
+                    _ex.get("section") if _ex else None,
                 )
             except Exception:
-                xml = inject_title_into_musicxml(xml, eid, "")
+                xml = inject_title_into_musicxml(xml, eid, "", None)
             if xml is not None:
                 xml = strip_score_junk(xml)
                 xml = insert_line_breaks(xml, 4)
