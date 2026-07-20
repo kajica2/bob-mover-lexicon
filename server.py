@@ -620,6 +620,20 @@ def strip_score_junk(xml_string):
     if not xml_string:
         return xml_string
 
+    # <movement-title> blocks (music21's write() adds this; we want
+    # only the <work-title> we injected to show)
+    xml_string = re.sub(r"<movement-title>.*?</movement-title>", "", xml_string, flags=re.DOTALL)
+    xml_string = re.sub(r"<movement-title\b[^>]*/>", "", xml_string)
+
+    # <key>...</key> blocks (we want accidentals on notes, not a key
+    # signature at the start of each bar). Music21's transpose() may
+    # add <key> elements; strip them all.
+    xml_string = re.sub(r"<key>.*?</key>", "", xml_string, flags=re.DOTALL)
+    xml_string = re.sub(r"<key\b[^>]*/>", "", xml_string)
+    # <fifths> as a standalone (defensive)
+    xml_string = re.sub(r"<fifths>.*?</fifths>", "", xml_string, flags=re.DOTALL)
+    xml_string = re.sub(r"<fifths\b[^>]*/>", "", xml_string)
+
     # All <direction>...</direction> blocks (paired tags)
     xml_string = re.sub(
         r"<direction\b[^>]*>.*?</direction>",
@@ -877,6 +891,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 )
             except Exception:
                 xml = inject_title_into_musicxml(xml, eid, "")
+            if xml is not None:
                 xml = strip_score_junk(xml)
                 xml = insert_line_breaks(xml, 4)
         if xml is None:
