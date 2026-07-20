@@ -4,36 +4,22 @@ Bob Mover Jazz Lexicon — Practice Library server.
 
 Features:
 - Static file serving
-- PDF practice sheet generation
 - MusicXML serving (with optional transposition)
 - Practice log API
 - Collections API
 """
 import http.server
-import io
 import json
 import os
 import re
 import socketserver
 import sys
 import zipfile
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-# Optional dependencies
+# music21 is the gold standard for MusicXML manipulation
 try:
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.units import inch
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.utils import ImageReader
-    from reportlab.lib.colors import HexColor, black, white
-    HAS_REPORTLAB = True
-except ImportError:
-    HAS_REPORTLAB = False
-
-try:
-    # music21 is the gold standard for MusicXML manipulation
     from music21 import stream, interval, key, pitch
     HAS_MUSIC21 = True
 except ImportError:
@@ -56,309 +42,6 @@ PORT = int(os.environ.get("PORT", "8080"))
 def load_db_data():
     with open(EXERCISES_JSON) as f:
         return json.load(f)
-
-
-def generate_pdf(config, exercises_db):
-    """Generate a practice sheet PDF in memory."""
-    if not HAS_REPORTLAB:
-        raise RuntimeError("reportlab not installed")
-    by_id = {e["id"]: e for e in exercises_db["exercises"]}
-    exercises = [by_id[i] for i in config["ids"] if i in by_id]
-    if not exercises:
-        raise ValueError("No valid exercises found")
-
-    title = config.get("title", "Practice Sheet")
-    subtitle = config.get("subtitle", "")
-    include_notes = config.get("includeNotes", True)
-    include_title_page = config.get("includeTitlePage", True)
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=letter)
-    page_w, page_h = letter
-
-    if include_title_page and len(exercises) > 3:
-        c.setFont("Helvetica-Bold", 28)
-        c.drawCentredString(page_w / 2, page_h - 1.2 * inch, title)
-        if subtitle:
-            c.setFont("Helvetica-Oblique", 14)
-            c.drawCentredString(page_w / 2, page_h - 1.6 * inch, subtitle)
-        today = datetime.now().strftime("%Y-%m-%d")
-        c.setFont("Helvetica", 10)
-        c.drawCentredString(
-            page_w / 2,
-            page_h - 2.0 * inch,
-            f"{today} • {len(exercises)} exercises • Bob Mover Jazz Lexicon",
-        )
-        c.setFont("Helvetica", 11)
-        y = page_h - 2.8 * inch
-        for e in exercises:
-            text = f"#{e['id']:>3}   {e['title'][:55]:<55}   §{e['section']} (p.{e['page']})"
-            c.drawString(0.75 * inch, y, text)
-            y -= 0.22 * inch
-            if y < 1 * inch:
-                c.showPage()
-                y = page_h - 1 * inch
-        c.showPage()
-
-    for i, e in enumerate(exercises):
-        c.setFont("Helvetica-Bold", 13)
-        c.drawString(0.5 * inch, page_h - 0.45 * inch, f"#{e['id']}: {e['title'][:80]}")
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawRightString(
-            page_w - 0.5 * inch,
-            page_h - 0.45 * inch,
-            f"Section {e['section']} • Source page {e['page']}",
-        )
-
-        img_path = IMAGES_DIR / f"{e['id']:04d}.png"
-        new_h = 0
-        if img_path.exists():
-            img = ImageReader(str(img_path))
-            iw, ih = img.getSize()
-            max_w = page_w - 1 * inch
-            max_h = page_h - 1.6 * inch
-            if include_notes:
-                max_h -= 0.9 * inch
-            scale = min(max_w / iw, max_h / ih)
-            new_w = iw * scale
-            new_h = ih * scale
-            x = (page_w - new_w) / 2
-            y = page_h - 0.7 * inch - new_h
-            c.drawImage(img, x, y, width=new_w, height=new_h, preserveAspectRatio=True)
-
-        if include_notes:
-            y_tracking = (page_h - 0.7 * inch - new_h - 0.3 * inch) if img_path.exists() else page_h / 2 - 1 * inch
-            if y_tracking < 1.2 * inch:
-                c.showPage()
-                y_tracking = page_h - 1 * inch
-            c.setFont("Helvetica-Bold", 10)
-            c.drawString(0.5 * inch, y_tracking, "Practice tracking:")
-            c.setFont("Helvetica", 9)
-            for txt, x in [("☐ Completed", 0.5), ("Tempo: ____", 1.8), ("Date: ____", 3.1)]:
-                c.drawString(x * inch, y_tracking - 0.25 * inch, txt)
-            c.setStrokeColorRGB(0.75, 0.75, 0.75)
-            note_y = y_tracking - 0.55 * inch
-            for _ in range(3):
-                c.line(0.5 * inch, note_y, page_w - 0.5 * inch, note_y)
-                note_y -= 0.22 * inch
-
-        c.setFont("Helvetica", 8)
-        c.setFillColorRGB(0.6, 0.6, 0.6)
-        c.drawCentredString(
-            page_w / 2,
-            0.3 * inch,
-            f"{i + 1} / {len(exercises)} • Bob Mover Jazz Lexicon",
-        )
-        c.setFillColorRGB(0, 0, 0)
-        c.showPage()
-
-    c.save()
-    return buf.getvalue()
-
-
-# Note names for semitone offsets 0-11, used to label transposed pages
-SHARP_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-FLAT_NAMES  = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
-
-
-def note_name(semitones, prefer_flats=False):
-    """Return the note name for a semitone offset 0-11."""
-    s = semitones % 12
-    return (FLAT_NAMES if prefer_flats else SHARP_NAMES)[s]
-
-
-def transposition_sequence(mode):
-    """Return a list of 12 semitone offsets (0-11) for the given mode.
-
-    - 'chromatic': 0, 1, 2, ... 11 (chromatic ascending)
-    - 'min3-cycle5': minor 3rds (+3 semitones) walking by cycle of 5ths (+7
-      semitones each step). Order: 0, 3, 10, 5, 0, ... — accumulates by
-      (+7 mod 12) and adds 3 base offset. After 12 steps all 12 keys are hit.
-    """
-    if mode == "chromatic":
-        return list(range(12))
-    if mode == "min3-cycle5":
-        # Walk cycle of 5ths: each step adds +7 mod 12 (i.e. +7, then +5, ...).
-        # Within each key, the transposition for the "minor 3rd voicing" is +3
-        # semitones above the root — we present the exercise in the minor-3rd
-        # register relative to each cycle-of-5ths key center.
-        seq = []
-        s = 0
-        for i in range(12):
-            seq.append(s)
-            s = (s + 7) % 12
-        return seq
-    raise ValueError(f"Unknown transposition mode: {mode}")
-
-
-def generate_all_keys_pdf(config, exercises_db):
-    """Generate a PDF with each exercise rendered 12 times, once per key.
-
-    The PDF uses the original cropped PNG (we can't render transposed notation
-    server-side without Lilypond/MuseScore). Each page is clearly labeled with
-    the target key so the player can mentally transpose or play along with
-    the practice player set to that instrument/key.
-
-    Modes:
-      - 'chromatic': all 12 keys chromatically (C, C#, D, ... B)
-      - 'min3-cycle5': all 12 keys ordered by cycle of 5ths (C, G, D, A, ...)
-                        each shown at +m3 voicing
-    """
-    if not HAS_REPORTLAB:
-        raise RuntimeError("reportlab not installed")
-    by_id = {e["id"]: e for e in exercises_db["exercises"]}
-    ids = config.get("ids") or []
-    exercises = [by_id[i] for i in ids if i in by_id]
-    if not exercises:
-        raise ValueError("No valid exercises found")
-
-    mode = config.get("mode", "chromatic")
-    seq = transposition_sequence(mode)
-
-    title = config.get("title") or "All 12 Keys"
-    subtitle = config.get("subtitle") or (
-        "Chromatic ascent" if mode == "chromatic"
-        else "Minor 3rds in cycle of 5ths"
-    )
-    prefer_flats = bool(config.get("preferFlats", False))
-    include_notes = config.get("includeNotes", True)
-    include_title_page = config.get("includeTitlePage", True)
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=letter)
-    page_w, page_h = letter
-
-    # ----- Title page -----
-    if include_title_page:
-        c.setFont("Helvetica-Bold", 28)
-        c.drawCentredString(page_w / 2, page_h - 1.2 * inch, title)
-        c.setFont("Helvetica-Oblique", 14)
-        c.drawCentredString(page_w / 2, page_h - 1.6 * inch, subtitle)
-        c.setFont("Helvetica", 11)
-        c.drawCentredString(
-            page_w / 2, page_h - 2.0 * inch,
-            f"{len(exercises)} exercise(s) × {len(seq)} keys = "
-            f"{len(exercises) * len(seq)} pages",
-        )
-        y = page_h - 2.7 * inch
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(0.75 * inch, y, "Key sequence:")
-        c.setFont("Helvetica", 10)
-        y -= 0.22 * inch
-        # Two columns of 6 keys each
-        for i, semi in enumerate(seq):
-            col = i // 6
-            row = i % 6
-            cx = 0.75 * inch + col * 3.2 * inch
-            cy = y - row * 0.25 * inch
-            label = f"{i + 1:>2}. {note_name(semi, prefer_flats)} (+{semi} st)"
-            c.drawString(cx, cy, label)
-        c.setFont("Helvetica-Oblique", 9)
-        c.setFillColorRGB(0.4, 0.4, 0.4)
-        c.drawCentredString(
-            page_w / 2, 1.0 * inch,
-            "Each exercise appears in all 12 keys. Use the Practice page "
-            "to hear each transposition with the synth.",
-        )
-        c.setFillColorRGB(0, 0, 0)
-        c.showPage()
-
-    # ----- Body: each exercise × each key -----
-    total_pages = len(exercises) * len(seq)
-    page_idx = 0
-    for ex in exercises:
-        for k_idx, semi in enumerate(seq):
-            page_idx += 1
-            key_label = note_name(semi, prefer_flats)
-
-            # Header bar with exercise info
-            c.setFillColorRGB(0.95, 0.95, 0.95)
-            c.rect(0, page_h - 0.55 * inch, page_w, 0.55 * inch, fill=1, stroke=0)
-            c.setFillColorRGB(0, 0, 0)
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(0.5 * inch, page_h - 0.35 * inch,
-                         f"#{ex['id']}: {ex['title'][:70]}")
-            c.setFont("Helvetica-Bold", 14)
-            c.drawRightString(page_w - 0.5 * inch, page_h - 0.35 * inch,
-                              f"Key of {key_label}")
-            c.setFont("Helvetica-Oblique", 8)
-            c.setFillColorRGB(0.45, 0.45, 0.45)
-            c.drawString(0.5 * inch, page_h - 0.50 * inch,
-                         f"Section {ex['section']} • Source page {ex['page']} • "
-                         f"{mode} • {k_idx + 1}/{len(seq)}")
-            c.setFillColorRGB(0, 0, 0)
-
-            # Embed the exercise image
-            img_path = IMAGES_DIR / f"{ex['id']:04d}.png"
-            new_h = 0
-            if img_path.exists():
-                img = ImageReader(str(img_path))
-                iw, ih = img.getSize()
-                max_w = page_w - 1 * inch
-                max_h = page_h - 1.8 * inch
-                if include_notes:
-                    max_h -= 0.9 * inch
-                scale = min(max_w / iw, max_h / ih)
-                new_w = iw * scale
-                new_h = ih * scale
-                x = (page_w - new_w) / 2
-                y = page_h - 0.7 * inch - new_h
-                c.drawImage(img, x, y, width=new_w, height=new_h,
-                            preserveAspectRatio=True)
-
-            # Transposition instruction banner
-            banner_y = (page_h - 0.7 * inch - new_h - 0.18 * inch) \
-                if img_path.exists() else page_h / 2 - 1.5 * inch
-            if banner_y > 1.6 * inch:
-                c.setFillColorRGB(1.0, 0.96, 0.85)  # warm yellow
-                c.rect(0.5 * inch, banner_y - 0.05 * inch,
-                       page_w - 1 * inch, 0.32 * inch, fill=1, stroke=0)
-                c.setFillColorRGB(0.15, 0.10, 0)
-                c.setFont("Helvetica-Bold", 10)
-                c.drawString(0.6 * inch, banner_y + 0.14 * inch,
-                             f"Transpose the pattern up {semi} semitones "
-                             f"to play it in {key_label}.")
-                c.setFont("Helvetica", 9)
-                if mode == "min3-cycle5":
-                    c.drawString(0.6 * inch, banner_y + 0.0 * inch,
-                                 "Voicing: play each phrase starting on the "
-                                 "minor 3rd above the root.")
-                else:
-                    c.drawString(0.6 * inch, banner_y + 0.0 * inch,
-                                 "Use the Practice page → Transpose dropdown "
-                                 f"to hear this in {key_label}.")
-                c.setFillColorRGB(0, 0, 0)
-
-            # Practice tracking row (optional)
-            if include_notes:
-                y_track = banner_y - 0.55 * inch if banner_y > 1.6 * inch else 1.0 * inch
-                c.setFont("Helvetica-Bold", 9)
-                c.drawString(0.5 * inch, y_track, "Practice tracking:")
-                c.setFont("Helvetica", 9)
-                for txt, x in [("☐ Done", 0.5),
-                               ("Tempo: ____", 1.8),
-                               ("Date: ____", 3.1),
-                               ("Key: " + key_label, 4.4)]:
-                    c.drawString(x * inch, y_track - 0.22 * inch, txt)
-                c.setStrokeColorRGB(0.75, 0.75, 0.75)
-                note_y = y_track - 0.50 * inch
-                for _ in range(2):
-                    c.line(0.5 * inch, note_y, page_w - 0.5 * inch, note_y)
-                    note_y -= 0.22 * inch
-
-            # Footer
-            c.setFont("Helvetica", 8)
-            c.setFillColorRGB(0.6, 0.6, 0.6)
-            c.drawCentredString(
-                page_w / 2, 0.3 * inch,
-                f"{page_idx} / {total_pages} • "
-                f"Bob Mover Jazz Lexicon — {mode}",
-            )
-            c.setFillColorRGB(0, 0, 0)
-            c.showPage()
-
-    c.save()
-    return buf.getvalue()
 
 
 def extract_musicxml_from_mxl(mxl_path):
@@ -527,36 +210,39 @@ def cycle_musicxml(mxl_path, mode, bars):
         return None
 
 
-def inject_title_into_musicxml(xml_string, exercise_id, title, section=None):
+def inject_title_into_musicxml(xml_string, exercise_id, title, section=None,
+                                section_name=None):
     """Inject <work><work-title>...</work-title></work> into the score so
-    Verovio renders the exercise name at the top.
+    Verovio renders the exercise label at the top.
 
     The displayed title is composed as:
-      <section> · #<id> · <exercise title>
-    e.g. "1A · #5 · Chromatic ascending triplets, descending in half steps"
+      <section full name> · #<exercise id>
+    e.g. "Chromatic · #5"
+
+    Falls back to the short section code (e.g. "1A") if `section_name` isn't
+    provided, and to "Exercise <id>" if no title/name data is available.
+
+    The `title` parameter is retained for callers that pass it (and for
+    logging), but is intentionally NOT included in the rendered work-title —
+    the score header should stay short so it doesn't dominate the page.
     """
     import re
-    if not title:
-        title = f"Exercise {exercise_id}"
-    safe_title = re.sub(r"\s+", " ", str(title)).strip()
-    prefix_parts = []
-    if section:
-        prefix_parts.append(f"§{section}")
-    prefix_parts.append(f"#{exercise_id}")
-    prefix = " · ".join(prefix_parts) + " · "
-    full = (prefix + safe_title)[:120]
-    safe = full  # already collapsed above
-    work_block = f'<work><work-title>{safe}</work-title></work>'
+    label_section = section_name or section or ""
+    full = f"{label_section} · #{exercise_id}".strip(" ·")
+    if not full:
+        full = f"Exercise {exercise_id}"
+    full = re.sub(r"\s+", " ", full)[:120]
+    work_block = f'<work><work-title>{full}</work-title></work>'
     if "<work>" in xml_string:
         if "<work-title>" in xml_string:
             xml_string = re.sub(
                 r"<work-title>[^<]*</work-title>",
-                f"<work-title>{safe}</work-title>",
+                f"<work-title>{full}</work-title>",
                 xml_string, count=1,
             )
         else:
             xml_string = xml_string.replace(
-                "<work>", f"<work><work-title>{safe}</work-title>", 1,
+                "<work>", f"<work><work-title>{full}</work-title>", 1,
             )
         return xml_string
     if "<score-partwise" in xml_string:
@@ -697,7 +383,11 @@ def get_musicxml_with_title(exercise_id, transpose_semitones=0):
         ex = next((e for e in data["exercises"] if e["id"] == exercise_id), None)
         if ex:
             xml = inject_title_into_musicxml(
-                xml, exercise_id, ex.get("title", ""), ex.get("section"),
+                xml,
+                exercise_id,
+                ex.get("title", ""),
+                ex.get("section"),
+                ex.get("section_name"),
             )
     except Exception:
         pass
@@ -811,8 +501,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        if path == "/api/sheet":
-            return self.handle_sheet_api()
         # Favorite endpoints
         m_fav = re.match(r"^/api/favorites/(\d+)$", path)
         if m_fav:
@@ -829,8 +517,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.send_json({"ok": True, "favorited": True})
         if path == "/api/favorites":
             return self.send_json({"favorites": db.get_favorites()})
-        if path == "/api/sheet/all-keys":
-            return self.handle_sheet_all_keys_api()
         if path.startswith("/api/musicxml/") and path.endswith("/cycle"):
             return self.handle_musicxml_cycle(path)
         if path == "/api/practice":
@@ -872,35 +558,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self.send_json({"error": "Not Found"}, 404)
 
     # ===== API handlers =====
-
-    def handle_sheet_api(self):
-        if not HAS_REPORTLAB:
-            return self.send_json({"error": "reportlab not installed"}, 500)
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
-            config = json.loads(raw)
-        except Exception as e:
-            return self.send_json({"error": f"Invalid JSON: {e}"}, 400)
-        ids = config.get("ids") or []
-        if not isinstance(ids, list) or len(ids) == 0:
-            return self.send_json({"error": "No exercise IDs provided"}, 400)
-        if len(ids) > 200:
-            return self.send_json({"error": "Too many exercises (max 200)"}, 400)
-        try:
-            edb = load_db_data()
-            pdf_bytes = generate_pdf(config, edb)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/pdf")
-            title = config.get("title", "practice_sheet")
-            safe_title = "".join(c if c.isalnum() or c in "_-" else "_" for c in title)[:60]
-            self.send_header("Content-Disposition", f'attachment; filename="{safe_title}.pdf"')
-            self.send_header("Content-Length", str(len(pdf_bytes)))
-            self.end_headers()
-            self.wfile.write(pdf_bytes)
-        except Exception as e:
-            print(f"PDF gen error: {e}", file=sys.stderr)
-            return self.send_json({"error": str(e)}, 500)
 
     def handle_musicxml_cycle(self, path):
         """POST /api/musicxml/<id>/cycle  body: { mode, bars, instrument, transpose }
@@ -948,9 +605,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 xml = inject_title_into_musicxml(
                     xml, eid, _ex.get("title", "") if _ex else "",
                     _ex.get("section") if _ex else None,
+                    _ex.get("section_name") if _ex else None,
                 )
             except Exception:
-                xml = inject_title_into_musicxml(xml, eid, "", None)
+                xml = inject_title_into_musicxml(xml, eid, "", None, None)
             if xml is not None:
                 xml = strip_score_junk(xml)
                 xml = insert_line_breaks(xml, 4)
@@ -963,54 +621,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-    def handle_sheet_all_keys_api(self):
-        """Generate a PDF with each exercise rendered in all 12 keys.
-
-        Body JSON:
-          {
-            "ids": [int, ...],            # exercise IDs (max 10)
-            "mode": "chromatic"|"min3-cycle5",
-            "preferFlats": bool,
-            "title": str,
-            "subtitle": str,
-            "includeNotes": bool,
-            "includeTitlePage": bool,
-          }
-        """
-        if not HAS_REPORTLAB:
-            return self.send_json({"error": "reportlab not installed"}, 500)
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(length) if length else b"{}"
-            config = json.loads(raw)
-        except Exception as e:
-            return self.send_json({"error": f"Invalid JSON: {e}"}, 400)
-        ids = config.get("ids") or []
-        if not isinstance(ids, list) or len(ids) == 0:
-            return self.send_json({"error": "No exercise IDs provided"}, 400)
-        if len(ids) > 10:
-            return self.send_json({"error": "Max 10 exercises for all-keys sheet (12 pages each)"}, 400)
-        mode = config.get("mode", "chromatic")
-        if mode not in ("chromatic", "min3-cycle5"):
-            return self.send_json({"error": f"Unknown mode: {mode}"}, 400)
-        try:
-            edb = load_db_data()
-            pdf_bytes = generate_all_keys_pdf(config, edb)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/pdf")
-            title = config.get("title") or f"all-keys-{mode}"
-            safe_title = "".join(c if c.isalnum() or c in "_-" else "_" for c in title)[:60]
-            self.send_header(
-                "Content-Disposition",
-                f'attachment; filename="{safe_title}.pdf"',
-            )
-            self.send_header("Content-Length", str(len(pdf_bytes)))
-            self.end_headers()
-            self.wfile.write(pdf_bytes)
-        except Exception as e:
-            print(f"All-keys PDF gen error: {e}", file=sys.stderr)
-            return self.send_json({"error": str(e)}, 500)
 
     def handle_log_practice(self):
         try:
@@ -1112,7 +722,6 @@ def main():
     print(f"Bob Mover Lexicon Practice Library")
     print(f"  Serving:    {ROOT}")
     print(f"  Port:       {PORT}")
-    print(f"  ReportLab:  {'yes' if HAS_REPORTLAB else 'NO'}")
     print(f"  music21:    {'yes' if HAS_MUSIC21 else 'NO - transposition disabled'}")
     print(f"  MusicXML:   {MUSICXML_DIR} ({len(list(MUSICXML_DIR.glob('*.mxl'))) if MUSICXML_DIR.exists() else 0} files)")
     print(f"  Images:     {IMAGES_DIR} ({len(list(IMAGES_DIR.glob('*.png')))} files)")

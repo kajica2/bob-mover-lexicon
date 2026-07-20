@@ -1,2 +1,1 @@
-reportlab>=4.0
 music21>=9.0

@@ -43,9 +43,9 @@
       const minutes = data ? data.minutes : 0;
       let level = 0;
       if (minutes > 0) level = 1;
-      if (minutes >= 5) level = 2;
-      if (minutes >= 15) level = 3;
-      if (minutes >= 30) level = 4;
+      if (minutes >= 2) level = 2;
+      if (minutes >= 5) level = 3;
+      if (minutes >= 10) level = 4;
       const day = document.createElement('div');
       day.className = 'day';
       day.dataset.level = level;
@@ -77,7 +77,7 @@
   function renderTable(practice, exById) {
     const tbody = document.getElementById('history-tbody');
     if (practice.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No practice sessions yet. Go log some on the Practice page!</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state"><div class="empty-icon">🎵</div>Nothing logged yet — log your first session to see history.</td></tr>';
       return;
     }
     tbody.innerHTML = practice.map((p) => {

@@ -20,7 +20,6 @@
       </a>
       <nav class="site-nav">
         <a href="../" class="nav-link">Browse</a>
-        <a href="../#sheet" class="nav-link">Build Sheet</a>
         <a href="./" class="nav-link active">Practice</a>
         <a href="../history" class="nav-link">History</a>
       </nav>
@@ -42,7 +41,6 @@
               <p class="ex-meta">
                 <span class="chip" id="ex-section">§1A</span>
                 <span id="ex-page" class="meta">p.23</span>
-                <a id="ex-detail-link" class="link" href="#">Open detail →</a>
               </p>
             </div>
             <div class="player-nav">
@@ -91,32 +89,13 @@
                       title="Apply the cycle to the exercise — makes it N times longer">✓ Apply</button>
               <span id="cycle-badge" class="cycle-badge off">Cycle off</span>
             </div>
-            <div class="control-row">
-              <label>Tempo</label>
-              <input id="tempo" type="number" value="120" min="40" max="320" class="input tempo-input">
-              <span class="bpm">BPM</span>
-              <button id="btn-play" class="btn btn-primary">
-                <span id="play-label">▶ Play</span>
-              </button>
-              <button id="btn-stop" class="btn btn-secondary" disabled>⏹ Stop</button>
-            </div>
-            <div class="control-row">
-              <label>Record</label>
-              <button id="btn-record" class="btn btn-record" title="Start a timed practice session">⏺ Record</button>
-              <span id="record-timer" class="record-timer">00:00</span>
-              <button id="metronome-toggle" class="btn-metronome" title="Toggle metronome click" aria-pressed="false">
-                <span class="metro-icon">🎼</span>
-                <span class="metro-label">Metronome</span>
-              </button>
-            </div>
-            <div class="control-row">
-              <label>Volume</label>
-              <input id="volume" type="range" min="0" max="100" value="50" class="slider">
-            </div>
-            <div class="control-row">
-              <label>Metronome</label>
-              <input id="metronome" type="checkbox" checked>
-              <span class="hint">Click on beat 1</span>
+            <div class="control-row audio-rec-row">
+              <label>Audio</label>
+              <button id="btn-audio-rec" class="btn btn-audio-rec" title="Record audio from your microphone">🎙 Rec</button>
+              <button id="btn-audio-stop" class="btn btn-secondary" disabled>⏹ Stop</button>
+              <span id="audio-timer" class="record-timer">00:00</span>
+              <canvas id="audio-waveform" class="audio-waveform" width="240" height="36" aria-label="Audio waveform"></canvas>
+              <a id="audio-download" class="btn btn-secondary btn-sm" style="display:none" download>⬇ Download</a>
             </div>
           </div>
 
@@ -176,26 +155,30 @@
       <!-- RIGHT: Queue + history + collections -->
       <div class="side-panel">
         <div class="card">
-          <div class="card-header">
-            <h3>Session Queue</h3>
+          <details class="side-details" open>
+            <summary><h3>Session Queue</h3></summary>
             <span class="hint" id="queue-count">0</span>
-          </div>
-          <p class="hint">Click "Add to queue" on any exercise to build a practice session.</p>
-          <div id="queue-list" class="queue-list"></div>
+            <p class="hint">Click "Add to queue" on any exercise to build a practice session.</p>
+            <div id="queue-list" class="queue-list"></div>
+          </details>
         </div>
 
         <div class="card">
-          <h3>Recent Practice</h3>
-          <div id="recent-list" class="recent-list">
-            <p class="hint">Loading…</p>
-          </div>
+          <details class="side-details">
+            <summary><h3>Recent Practice</h3></summary>
+            <div id="recent-list" class="recent-list">
+              <p class="hint">Loading…</p>
+            </div>
+          </details>
         </div>
 
         <div class="card">
-          <h3>Collections</h3>
-          <div id="collections-list" class="collections-list">
-            <p class="hint">Loading…</p>
-          </div>
+          <details class="side-details">
+            <summary><h3>Collections</h3></summary>
+            <div id="collections-list" class="collections-list">
+              <p class="hint">Loading…</p>
+            </div>
+          </details>
         </div>
       </div>
     </div>

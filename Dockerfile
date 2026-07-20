@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# System deps for reportlab fonts and music21
+# System deps for Verovio SVG rendering
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     curl \

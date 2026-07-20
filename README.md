@@ -11,7 +11,6 @@ A self-contained web app to browse, practice, and track progress on the **407 ex
 - Mark favorites — saved to localStorage
 - "Add to queue" button on every card to build a practice session
 - Practice status indicators (`✓ 2×`) on cards you've worked on
-- Detail modal with prev/next navigation
 
 ### 📄 Practice Sheet Builder
 - 2-column picker with search and section filters
@@ -47,19 +46,17 @@ A self-contained web app to browse, practice, and track progress on the **407 ex
 ### 🗄️ Backend
 - **SQLite** for persistence (single file: `practice.db`)
 - **music21** for transposition (with proper key signature adjustment)
-- **reportlab** for PDF generation
 - REST API:
   - `GET/POST /api/practice` — log and retrieve sessions
   - `GET /api/practice/stats` — aggregated stats
   - `GET /api/practice/exercise/:id` — single exercise history
   - `GET /api/musicxml/:id?transpose=N&instrument=X` — transposed MusicXML
   - `GET/POST/DELETE /api/collections` — manage collections
-  - `POST /api/sheet` — generate practice sheet PDF
 
 ## Stack
 
 - **Frontend**: Vanilla HTML/CSS/JS, Verovio (notation engine), Web Audio API
-- **Backend**: Python 3 + `reportlab` (PDF) + `music21` (transposition) + SQLite
+- **Backend**: Python 3 + `music21` (transposition) + SQLite
 - **Data**: JSON metadata + 407 cropped PNGs + 407 MusicXML files
 - **No npm, no webpack, no build step** — open and run
 
@@ -67,7 +64,7 @@ A self-contained web app to browse, practice, and track progress on the **407 ex
 
 ```bash
 # Install Python deps
-pip install reportlab music21
+pip install music21
 
 # Start the server (defaults to port 8080)
 python3 server.py
@@ -120,7 +117,6 @@ Extracted from `Bob_Mover_Jazz_Lexicon_-_2nd_Edition.pdf` using:
 - `tesseract` OCR for title detection
 - `pymupdf` for precise cropping
 - `Audiveris` for MusicXML OMR
-- `reportlab` for PDF generation
 - `music21` for transposition
 
 The original PDF remains the authoritative source; this is a study/practice aid.

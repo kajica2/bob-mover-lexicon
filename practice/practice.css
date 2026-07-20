@@ -83,9 +83,9 @@
   font-size: 12px;
   color: var(--ink-600);
   font-weight: 500;
-  min-width: 80px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  min-width: 60px;
 }
 .control-row .input {
   width: auto;
@@ -93,8 +93,6 @@
   padding: 6px 10px;
   font-size: 14px;
 }
-.tempo-input { width: 80px !important; }
-.bpm { color: var(--ink-500); font-size: 12px; }
 .slider {
   flex: 1;
   min-width: 100px;
@@ -104,13 +102,14 @@
 
 .score-container {
   background: white;
-  border: 1px solid var(--ink-100);
-  border-radius: 6px;
+  border: none;
+  border-radius: 8px;
   min-height: 200px;
-  padding: 12px;
+  padding: 40px 24px;
   text-align: center;
   overflow: auto;
   max-height: 600px;
+  margin: 24px 0;
 }
 .score-container svg {
   max-width: 100%;
@@ -137,11 +136,12 @@
 .form-row { display: flex; flex-direction: column; }
 .form-row.full { grid-column: 1 / -1; }
 .form-row label {
-  font-size: 11px;
-  color: var(--ink-600);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 4px;
+  display: block;
+  font-size: 13px;
+  color: var(--ink-700);
+  margin-bottom: 6px;
+  text-transform: none;
+  letter-spacing: 0;
   font-weight: 500;
 }
 .form-row .input { padding: 6px 10px; font-size: 14px; }
@@ -153,21 +153,59 @@
   font-size: 14px;
   color: var(--ink-700);
   cursor: pointer;
-  text-transform: none;
-  letter-spacing: 0;
 }
 .btn-block { width: 100%; }
 
 /* ===== Side panel ===== */
-.side-panel .card { padding: 16px; }
+.side-panel .card {
+  padding: 14px 16px;
+  border-color: var(--ink-200);
+}
 .side-panel h3 {
-  font-size: 15px;
+  font-size: 14px;
   margin: 0;
   font-family: Georgia, serif;
+  display: inline;
+  font-weight: 600;
+  color: var(--ink-700);
+}
+.side-details {
+  /* native <details>; we just style the toggle + body */
+}
+.side-details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  padding: 2px 0;
+}
+.side-details > summary::-webkit-details-marker {
+  display: none;
+}
+.side-details > summary::after {
+  content: "▾";
+  font-size: 10px;
+  color: var(--ink-400);
+  transition: transform 0.15s;
+  margin-left: 8px;
+}
+.side-details:not([open]) > summary::after {
+  transform: rotate(-90deg);
+}
+.side-details > summary:hover h3 {
+  color: var(--ink-900);
+}
+.side-details > summary:hover::after {
+  color: var(--brass-600);
+}
+.side-details > *:not(summary) {
+  margin-top: 10px;
 }
 
 .queue-list, .recent-list, .collections-list {
-  margin-top: 12px;
+  margin-top: 10px;
   max-height: 400px;
   overflow-y: auto;
 }
@@ -226,11 +264,26 @@
 
 .empty-state {
   text-align: center;
-  color: var(--ink-400);
-  font-size: 12px;
-  padding: 16px;
-  font-style: italic;
+  color: var(--ink-500);
+  font-size: 13px;
+  padding: 20px 16px;
+  font-style: normal;
+  line-height: 1.5;
 }
+.empty-state .empty-icon {
+  display: inline-block;
+  font-size: 24px;
+  color: var(--brass-300);
+  margin-bottom: 6px;
+}
+.empty-state .empty-cta {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--brass-600);
+  text-decoration: none;
+  font-weight: 500;
+}
+.empty-state .empty-cta:hover { text-decoration: underline; }
 
 
 /* Cycle badge — shows current cycle state next to Apply button */
@@ -353,9 +406,18 @@
   background: rgba(200, 168, 90, 0.08);
 }
 
-/* Record button + timer */
-.btn-record {
-  background: #dc2626;
+/* Record timer (shared by audio-timer) */
+.record-timer {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+  min-width: 60px;
+}
+
+/* Audio recording controls */
+.btn-audio-rec {
+  background: #d97706;
   color: white;
   border: none;
   border-radius: 6px;
@@ -368,79 +430,70 @@
   align-items: center;
   gap: 6px;
 }
-.btn-record:hover { background: #b91c1c; }
-.btn-record.recording {
+.btn-audio-rec:hover:not(:disabled) { background: #b45309; }
+.btn-audio-rec:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-audio-rec.recording {
   background: white;
-  color: #dc2626;
-  border: 1px solid #dc2626;
-  animation: pulse 1.4s ease-in-out infinite;
+  color: #d97706;
+  border: 1px solid #d97706;
+  animation: pulse-audio 1.4s ease-in-out infinite;
 }
-.btn-record.recording::before {
-  content: "●";
-  color: #dc2626;
-  animation: blink 1s step-end infinite;
+@keyframes pulse-audio {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(217, 119, 6, 0); }
 }
-@keyframes pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
-  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+.audio-rec-row .btn-secondary {
+  padding: 8px 14px;
+  font-size: 14px;
 }
-@keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0.2; }
+.audio-waveform {
+  background: #0f1117;
+  border-radius: 4px;
+  height: 36px;
+  width: 240px;
+  margin: 0 6px;
+  vertical-align: middle;
 }
-.record-timer {
-  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
-  font-size: 16px;
-  font-weight: 600;
-  color: #333;
-  min-width: 60px;
-}
-
-/* Metronome toggle */
-.btn-metronome {
-  background: #f3f4f6;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
+#audio-download {
+  text-decoration: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  color: #374151;
-  transition: all 0.15s;
+  gap: 4px;
 }
-.btn-metronome:hover { background: #e5e7eb; }
-.btn-metronome[aria-pressed="true"] {
-  background: #c8a85a;
-  color: white;
-  border-color: #c8a85a;
-}
-.metro-icon { font-size: 16px; }
 
-/* History item with delete button */
+/* History item with delete button — refined for clarity */
 .recent-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ink-100);
+  border-radius: 4px;
 }
-.recent-item .ri-meta { font-size: 11px; color: #888; }
+.recent-item:last-child { border-bottom: none; }
+.recent-item:hover { background: var(--brass-50); }
+.recent-item .ri-meta {
+  font-size: 11px;
+  color: var(--ink-500);
+  font-family: 'SF Mono', Monaco, monospace;
+}
 .recent-item .ri-date {
   font-size: 11px;
-  color: #555;
+  color: var(--ink-500);
   font-weight: 500;
 }
 .recent-item button.delete-log {
   background: none;
   border: none;
-  color: #c00;
+  color: var(--ink-400);
   font-size: 16px;
   cursor: pointer;
   padding: 2px 6px;
   margin-left: auto;
   opacity: 0.5;
-  transition: opacity 0.15s;
+  transition: opacity 0.15s, color 0.15s;
 }
-.recent-item button.delete-log:hover { opacity: 1; }
+.recent-item button.delete-log:hover {
+  opacity: 1;
+  color: #dc2626;
+}

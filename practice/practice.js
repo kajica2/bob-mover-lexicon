@@ -9,260 +9,25 @@
     currentId: null,
     queue: JSON.parse(localStorage.getItem('practice_queue') || '[]'),
     verovio: null,
-    audio: null,
-    audioCtx: null,
-    isPlaying: false,
-    playInterval: null,
-    metronomeInterval: null,
+    audioRec: {
+      active: false,
+      mediaRecorder: null,
+      mediaStream: null,
+      audioCtx: null,
+      analyser: null,
+      chunks: [],
+      startedAt: null,
+      rafId: null,
+      blobUrl: null,
+      blobMime: null,
+      lastDurationMs: 0,
+    },
     rawXml: null,
     zoomScale: 50,
     zoomPage: 1,
     zoomPageCount: 1,
     fullPage: false,
   };
-
-  // ===== Audio engine =====
-  // Polyphonic FM synth with explicit voice allocation (max 8 voices),
-  // mono output, and a single-tap feedback reverb. Built on raw Web Audio
-  // (Tone.js not bundled in this repo); API is Tone.js-shaped so swapping
-  // in `new Tone.PolySynth(...)` later is a small change.
-
-  const NUM_VOICES = 8;
-  const VOICE_REVERB_WET = 0.20;
-
-  function initAudio() {
-    if (state.audioCtx) return state.audioCtx;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new Ctx();
-
-    // ----- Force mono output on the destination -----
-    // Prevents phase issues across stereo speakers and matches the
-    // single-voice sax practice aesthetic.
-    try {
-      ctx.destination.channelCount = 1;
-      ctx.destination.channelCountMode = 'explicit';
-      ctx.destination.channelInterpretation = 'speakers';
-    } catch (e) {
-      console.warn('Could not force mono destination:', e);
-    }
-
-    // ----- Master bus -----
-    state.masterGain = ctx.createGain();
-    state.masterGain.gain.value = 0.5;
-
-    state.compressor = ctx.createDynamicsCompressor();
-    state.compressor.threshold.value = -16;
-    state.compressor.knee.value = 10;
-    state.compressor.ratio.value = 4;
-    state.compressor.attack.value = 0.003;
-    state.compressor.release.value = 0.18;
-
-    state.masterGain.connect(state.compressor);
-    state.compressor.connect(ctx.destination);
-
-    // ----- Mono feedback reverb (single delay line) -----
-    state.reverbIn = ctx.createGain();
-    state.reverbIn.gain.value = 1.0;
-    state.reverbDelay = ctx.createDelay(1.0);
-    state.reverbDelay.delayTime.value = 0.18;
-    state.reverbFB = ctx.createGain();
-    state.reverbFB.gain.value = 0.22;
-    state.reverbWet = ctx.createGain();
-    state.reverbWet.gain.value = VOICE_REVERB_WET;
-    state.reverbIn.connect(state.reverbDelay);
-    state.reverbDelay.connect(state.reverbFB);
-    state.reverbFB.connect(state.reverbDelay);
-    state.reverbDelay.connect(state.reverbWet);
-    state.reverbWet.connect(state.masterGain);
-
-    state.audioCtx = ctx;
-    state.voices = [];
-    for (let i = 0; i < NUM_VOICES; i++) state.voices.push(createVoice(ctx));
-
-    // Dedicated mono metronome bus (keeps the click out of reverb)
-    state.metroGain = ctx.createGain();
-    state.metroGain.gain.value = 0.7;
-    state.metroGain.connect(state.masterGain);
-
-    return ctx;
-  }
-
-  function createVoice(ctx) {
-    // Persistent voice: oscillators run forever, amp envelope gates audio.
-    // Reusing nodes avoids per-note allocation and start/stop cliffs.
-    const carrier = ctx.createOscillator();
-    carrier.type = 'triangle';
-    carrier.frequency.value = 440;
-
-    const mod = ctx.createOscillator();
-    mod.type = 'sine';
-    mod.frequency.value = 880;
-    const modDepth = ctx.createGain();
-    modDepth.gain.value = 0;
-    mod.connect(modDepth);
-    modDepth.connect(carrier.frequency);
-
-    const sub = ctx.createOscillator();
-    sub.type = 'sine';
-    sub.frequency.value = 220;
-    const subGain = ctx.createGain();
-    subGain.gain.value = 0.32;
-    sub.connect(subGain);
-
-    const mix = ctx.createGain();
-    mix.gain.value = 1.0;
-    carrier.connect(mix);
-    subGain.connect(mix);
-
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.Q.value = 2;
-    filter.frequency.value = 1200;
-    mix.connect(filter);
-
-    const amp = ctx.createGain();
-    amp.gain.value = 0;
-    filter.connect(amp);
-    amp.connect(state.masterGain);
-
-    const wetTap = ctx.createGain();
-    wetTap.gain.value = 1.0;
-    amp.connect(wetTap);
-    wetTap.connect(state.reverbIn);
-
-    const lfo = ctx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 5.5;
-    const lfoDepth = ctx.createGain();
-    lfoDepth.gain.value = 0;
-    lfo.connect(lfoDepth);
-    lfoDepth.connect(carrier.frequency);
-
-    carrier.start();
-    mod.start();
-    sub.start();
-    lfo.start();
-
-    return {
-      ctx, carrier, mod, modDepth, sub, subGain,
-      filter, amp, lfo, lfoDepth, wetTap,
-      inUse: false,
-      noteOnTime: -1,
-      scheduledStop: -1,
-    };
-  }
-
-  function findFreeVoice() {
-    // Idle voice first; if all busy, steal the oldest one (hard cut).
-    let oldest = state.voices[0];
-    for (const v of state.voices) {
-      if (!v.inUse) return v;
-      if (v.noteOnTime < oldest.noteOnTime) oldest = v;
-    }
-    hardStopVoice(oldest);
-    return oldest;
-  }
-
-  function hardStopVoice(v) {
-    const now = v.ctx.currentTime;
-    v.amp.gain.cancelScheduledValues(now);
-    v.amp.gain.setTargetAtTime(0, now, 0.005);
-    v.inUse = false;
-    v.noteOnTime = -1;
-    v.scheduledStop = -1;
-  }
-
-  function playNote(midi, duration = 0.5, time = null, velocity = 0.85) {
-    if (!state.audioCtx) return;
-    const ctx = state.audioCtx;
-    const t = time !== null ? time : ctx.currentTime;
-    const freq = midiToFreq(midi);
-    const v = findFreeVoice();
-
-    v.inUse = true;
-    v.noteOnTime = t;
-    v.scheduledStop = t + duration;
-
-    v.carrier.frequency.cancelScheduledValues(t);
-    v.carrier.frequency.setValueAtTime(freq, t);
-    v.mod.frequency.cancelScheduledValues(t);
-    v.mod.frequency.setValueAtTime(freq * 2, t);
-    v.sub.frequency.cancelScheduledValues(t);
-    v.sub.frequency.setValueAtTime(freq * 0.5, t);
-
-    v.modDepth.gain.cancelScheduledValues(t);
-    v.modDepth.gain.setValueAtTime(freq * 1.2, t);
-
-    v.lfoDepth.gain.cancelScheduledValues(t);
-    if (duration > 0.25) {
-      v.lfoDepth.gain.setValueAtTime(0, t);
-      v.lfoDepth.gain.linearRampToValueAtTime(freq * 0.010, t + 0.25);
-      v.lfoDepth.gain.linearRampToValueAtTime(0, t + duration);
-    } else {
-      v.lfoDepth.gain.setValueAtTime(0, t);
-    }
-
-    v.filter.frequency.cancelScheduledValues(t);
-    v.filter.frequency.setValueAtTime(800, t);
-    v.filter.frequency.linearRampToValueAtTime(Math.min(freq * 6, 5000), t + 0.04);
-    v.filter.frequency.exponentialRampToValueAtTime(
-      Math.max(freq * 1.5, 500), t + duration,
-    );
-
-    const peak = 0.28 * velocity;
-    v.amp.gain.cancelScheduledValues(t);
-    v.amp.gain.setValueAtTime(0, t);
-    v.amp.gain.linearRampToValueAtTime(peak, t + 0.012);
-    v.amp.gain.linearRampToValueAtTime(peak * 0.7, t + 0.10);
-    const releaseStart = Math.max(0.12, duration - 0.08);
-    v.amp.gain.setValueAtTime(peak * 0.7, t + releaseStart);
-    v.amp.gain.exponentialRampToValueAtTime(0.0005, t + duration);
-
-    // Release voice back to pool after note ends
-    const releaseMs = (duration + 0.02) * 1000;
-    setTimeout(() => {
-      if (v.inUse && Math.abs(v.noteOnTime - t) < 1e-6) {
-        v.inUse = false;
-        v.noteOnTime = -1;
-      }
-    }, releaseMs);
-  }
-
-  function midiToFreq(midi) {
-    return 440 * Math.pow(2, (midi - 69) / 12);
-  }
-
-  function click(t = null, accent = false) {
-    if (!state.audioCtx) return;
-    const ctx = state.audioCtx;
-    const now = t !== null ? t : ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'square';
-    osc.frequency.value = accent ? 1500 : 1000;
-    const peak = accent ? 0.22 : 0.13;
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(peak, now + 0.001);
-    gain.gain.exponentialRampToValueAtTime(0.0005, now + 0.045);
-    osc.connect(gain);
-    gain.connect(state.metroGain);
-    osc.start(now);
-    osc.stop(now + 0.06);
-  }
-
-  function setVolume(v) {
-    const vol = Math.max(0, Math.min(100, v)) / 100;
-    if (state.masterGain) {
-      const ctx = state.audioCtx;
-      state.masterGain.gain.cancelScheduledValues(ctx.currentTime);
-      state.masterGain.gain.setTargetAtTime(vol, ctx.currentTime, 0.02);
-    }
-  }
-
-  function panic() {
-    // Immediately silence all voices (called by stop())
-    if (state.voices) for (const v of state.voices) hardStopVoice(v);
-  }
 
   // ===== MusicXML playback =====
   function parseMusicXML(xmlString) {
@@ -420,66 +185,6 @@
     return { notes: out, stats };
   }
 
-  // ===== Playback =====
-  function play() {
-    if (!state.currentScore) return;
-    initAudio();
-    if (state.audioCtx.state === 'suspended') {
-      state.audioCtx.resume();
-    }
-    state.isPlaying = true;
-    const bpm = parseInt(document.getElementById('tempo').value) || 120;
-    const secondsPerBeat = 60 / bpm;
-
-    // The cycle is baked into state.currentScore.notes by applyCycle()
-    // (server extended the MusicXML and we re-parsed it). No client-side
-    // cycle manipulation here.
-    const notes = state.currentScore.notes;
-    if (notes.length === 0) return;
-
-    const useMetronome = document.getElementById('metronome').checked;
-    const startTime = state.audioCtx.currentTime + 0.1;
-
-    // Schedule each note
-    notes.forEach((n) => {
-      const t = startTime + n.beat * secondsPerBeat;
-      playNote(n.midi, n.duration * secondsPerBeat * 0.95, t);
-    });
-
-    // Metronome — accent on beat 1 of each measure
-    if (useMetronome) {
-      const totalBeats = Math.max(...notes.map(n => n.beat)) + 4;
-      for (let beat = 0; beat <= totalBeats; beat += 4) {
-        click(startTime + beat * secondsPerBeat, true);   // accent
-        // Optional downbeat clicks for beats 2/3/4
-        for (let sub = 1; sub < 4; sub++) {
-          click(startTime + (beat + sub) * secondsPerBeat, false);
-        }
-      }
-    }
-
-    // Auto-stop
-    const totalDuration = (Math.max(...notes.map(n => n.beat + n.duration)) + 1) * secondsPerBeat * 1000;
-    state.playInterval = setTimeout(() => stop(), totalDuration);
-
-    document.getElementById('play-label').textContent = '⏸ Playing…';
-    document.getElementById('btn-play').disabled = true;
-    document.getElementById('btn-stop').disabled = false;
-  }
-
-  function stop() {
-    state.isPlaying = false;
-    if (state.playInterval) clearTimeout(state.playInterval);
-    if (state.metronomeInterval) clearInterval(state.metronomeInterval);
-    // Silences voices in place — keeps the AudioContext alive so the next
-    // play() doesn't have to recreate oscillators and modulators.
-    panic();
-    if (state.audioCtx) state.audioCtx.suspend();
-    document.getElementById('play-label').textContent = '▶ Play';
-    document.getElementById('btn-play').disabled = false;
-    document.getElementById('btn-stop').disabled = true;
-  }
-
   // ===== Verovio rendering =====
   function renderAtScale() {
     if (!state.verovio || !state.rawXml) return;
@@ -550,9 +255,6 @@
     state.zoomPage = 1;
     renderAtScale();
     state.currentScore = parseMusicXML(xmlString);
-    if (state.currentScore.bpm && !document.getElementById('tempo').dataset.userSet) {
-      document.getElementById('tempo').value = Math.round(state.currentScore.bpm);
-    }
   }
 
   function zoomIn() {
@@ -602,10 +304,6 @@
 
   async function loadExercise(id) {
     stop(); // stop any playing
-    if (state.recording && state.recording.active) {
-      // Auto-stop the recording if user navigates away
-      if (recordBtn) recordBtn.click();
-    }
     state.currentId = id;
     // Check favorite status
     if (state.currentId) {
@@ -640,7 +338,6 @@
     document.getElementById('ex-title').textContent = `#${id}`;
     document.getElementById('ex-section').textContent = `§${ex.section}`;
     document.getElementById('ex-page').textContent = `p.${ex.page}`;
-    document.getElementById('ex-detail-link').href = `../exercises/${id}/`;
 
     // Update URL without reload
     const newUrl = new URL(window.location);
@@ -731,7 +428,7 @@
     const list = document.getElementById('queue-list');
     document.getElementById('queue-count').textContent = state.queue.length;
     if (state.queue.length === 0) {
-      list.innerHTML = '<p class="empty-state">Empty. Add exercises from the Browse page.</p>';
+      list.innerHTML = '<div class="empty-state"><div class="empty-icon">🎷</div>No exercises queued yet.<br><a class="empty-cta" href="../">Browse the library →</a></div>';
       return;
     }
     list.innerHTML = state.queue.map((id, idx) => {
@@ -776,7 +473,7 @@
       const otherRecent = recentAll.filter((p) => p.exercise_id !== state.currentId);
       const html = otherRecent.length > 0
         ? otherRecent.slice(0, 8).map((r) => formatRecentItem(r)).join('')
-        : '<p class="empty-state">No other practice logged yet.</p>';
+        : '<div class="empty-state"><div class="empty-icon">🎵</div>No other practice logged yet.</div>';
       // Only update the bottom part (after the "This exercise" section)
       const existing = list.querySelector('h4');
       if (existing) {
@@ -799,7 +496,7 @@
       const list = document.getElementById('collections-list');
       const cols = data.collections || [];
       if (cols.length === 0) {
-        list.innerHTML = '<p class="empty-state">No collections yet.</p>';
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">📚</div>No collections yet.<br>Group exercises by topic, key, or routine.</div>';
         return;
       }
       list.innerHTML = cols.map((c) => `
@@ -829,6 +526,278 @@
   }
 
   // ===== Practice logging =====
+  // ===== Recording (timed practice session) =====
+  // Tracks wall-clock time + which exercises were visited while recording.
+  // On stop, posts a single /api/practice log for the exercise that was
+  // active when the user clicked Stop, with duration_min derived from elapsed
+  // seconds. (If we wanted per-exercise splits we'd batch POST — kept simple
+  // here so the server schema doesn't need a new "session group" concept.)
+
+  // Friendly key names for each semitone offset from original (matches the
+  // <select id="transpose"> options in index.html: 0=Original, then the
+  // listed offsets mod 12 cycle around the circle of fifths).
+  const TRANSPOSE_OFFSET_NAMES = {
+    1: 'Db', 2: 'D', 3: 'Eb', 4: 'E', 5: 'F',
+    6: 'Gb', 7: 'G', 8: 'Ab', 9: 'A', 10: 'Bb', 11: 'B',
+  };
+
+  function fmtTimer(secs) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  // ===== Audio recording (microphone) =====
+  // Records what the user plays/sings while they practice, draws a live
+  // waveform, and offers the finished take as a downloadable file. State is
+  // independent of the timed practice recorder above — both can run in
+  // parallel if the user wants.
+
+  function pickRecorderMime() {
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/mp4',
+    ];
+    if (typeof MediaRecorder === 'undefined') return null;
+    for (const m of candidates) {
+      try { if (MediaRecorder.isTypeSupported(m)) return m; } catch {}
+    }
+    return '';
+  }
+
+  function extForMime(mime) {
+    if (!mime) return 'webm';
+    if (mime.indexOf('webm') !== -1) return 'webm';
+    if (mime.indexOf('ogg') !== -1) return 'ogg';
+    if (mime.indexOf('mp4') !== -1) return 'm4a';
+    return 'bin';
+  }
+
+  function setAudioRecUI(phase) {
+    // phase ∈ {idle, recording, ready}
+    const recBtn = document.getElementById('btn-audio-rec');
+    const stopBtn = document.getElementById('btn-audio-stop');
+    const dl = document.getElementById('audio-download');
+    if (recBtn) {
+      recBtn.disabled = phase === 'recording';
+      recBtn.classList.toggle('recording', phase === 'recording');
+      recBtn.textContent = phase === 'recording' ? '● Recording' : '🎙 Rec';
+    }
+    if (stopBtn) stopBtn.disabled = phase !== 'recording';
+    if (phase !== 'ready' && dl) dl.style.display = 'none';
+  }
+
+  function drawIdleWaveform() {
+    const canvas = document.getElementById('audio-waveform');
+    if (!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+    // Subtle dark backdrop so the idle line is visible
+    ctx.fillStyle = '#0f1117';
+    ctx.fillRect(0, 0, w, h);
+    // Centered brass-tinted horizontal line
+    ctx.strokeStyle = 'rgba(228, 189, 86, 0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(8, h / 2);
+    ctx.lineTo(w - 8, h / 2);
+    ctx.stroke();
+    // Small "READY" caption centered on the canvas
+    ctx.fillStyle = 'rgba(228, 189, 86, 0.55)';
+    ctx.font = '9px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('READY', w / 2, h / 2 - 8);
+  }
+
+  function renderWaveformLoop() {
+    const r = state.audioRec;
+    if (!r.active) return;
+    const canvas = document.getElementById('audio-waveform');
+    if (!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const analyser = r.analyser;
+    if (!analyser) return;
+
+    const bufLen = analyser.fftSize;
+    const data = new Uint8Array(bufLen);
+    analyser.getByteTimeDomainData(data);
+
+    const w = canvas.width, h = canvas.height;
+    ctx.fillStyle = 'rgba(20, 22, 28, 0.55)'; // matches card bg
+    ctx.fillRect(0, 0, w, h);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#d97706'; // brass accent
+    ctx.beginPath();
+
+    const step = Math.max(1, Math.floor(bufLen / w));
+    for (let x = 0; x < w; x++) {
+      // average a slice of samples so the waveform fills the canvas
+      let min = 255, max = 0;
+      const start = x * step;
+      const end = Math.min(bufLen, start + step);
+      for (let i = start; i < end; i++) {
+        const v = data[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      const yMin = ((min - 128) / 128) * (h / 2) + (h / 2);
+      const yMax = ((max - 128) / 128) * (h / 2) + (h / 2);
+      ctx.moveTo(x + 0.5, yMin);
+      ctx.lineTo(x + 0.5, Math.max(yMax, yMin + 0.5));
+    }
+    ctx.stroke();
+
+    // tick the timer text
+    if (r.startedAt) {
+      const t = document.getElementById('audio-timer');
+      if (t) t.textContent = fmtTimer(Math.floor((Date.now() - r.startedAt) / 1000));
+    }
+    r.rafId = requestAnimationFrame(renderWaveformLoop);
+  }
+
+  async function startAudioRecording() {
+    const r = state.audioRec;
+    if (r.active) return;
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      alert('Microphone API not available in this browser.');
+      return;
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      alert('Microphone access denied or unavailable: ' + e.message);
+      return;
+    }
+    const mime = pickRecorderMime();
+    let recorder;
+    try {
+      recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch (e) {
+      alert('Audio recording not supported: ' + e.message);
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    r.mediaStream = stream;
+    r.mediaRecorder = recorder;
+    r.chunks = [];
+    r.blobMime = recorder.mimeType || mime || 'audio/webm';
+    recorder.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) r.chunks.push(ev.data);
+    };
+    recorder.onstop = () => finishAudioRecording();
+    recorder.onerror = (ev) => {
+      console.error('MediaRecorder error', ev);
+      alert('Recording error.');
+      cleanupAudioRecording();
+      setAudioRecUI('idle');
+      drawIdleWaveform();
+    };
+
+    // Set up AnalyserNode for the live waveform. We need an AudioContext.
+    // Playback synth was removed; create a transient one just for the
+    // analyser/meter.
+    let ctx = null;
+    try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+    catch { ctx = null; }
+    r.audioCtx = ctx;
+    if (ctx) {
+      try {
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.6;
+        src.connect(analyser);
+        // Don't connect to destination — we don't want to echo mic back.
+        r.analyser = analyser;
+      } catch (e) {
+        console.warn('analyser setup failed', e);
+        r.analyser = null;
+      }
+    }
+
+    try {
+      recorder.start(250); // 250ms timeslice
+    } catch (e) {
+      alert('Could not start recording: ' + e.message);
+      cleanupAudioRecording();
+      setAudioRecUI('idle');
+      return;
+    }
+    r.active = true;
+    r.startedAt = Date.now();
+    setAudioRecUI('recording');
+    drawIdleWaveform();
+    r.rafId = requestAnimationFrame(renderWaveformLoop);
+  }
+
+  function stopAudioRecording() {
+    const r = state.audioRec;
+    if (!r.active) return;
+    try {
+      if (r.mediaRecorder && r.mediaRecorder.state !== 'inactive') {
+        r.mediaRecorder.stop();
+      } else {
+        finishAudioRecording();
+      }
+    } catch (e) {
+      console.error('stop failed', e);
+      cleanupAudioRecording();
+      setAudioRecUI('idle');
+      drawIdleWaveform();
+    }
+  }
+
+  function finishAudioRecording() {
+    const r = state.audioRec;
+    if (r.rafId) { cancelAnimationFrame(r.rafId); r.rafId = null; }
+    const elapsedMs = r.startedAt ? (Date.now() - r.startedAt) : 0;
+    r.lastDurationMs = elapsedMs;
+    r.active = false;
+    r.startedAt = null;
+
+    // Build a Blob + object URL for download.
+    if (r.blobUrl) { try { URL.revokeObjectURL(r.blobUrl); } catch {} r.blobUrl = null; }
+    const blob = new Blob(r.chunks, { type: r.blobMime || 'audio/webm' });
+    r.blobUrl = URL.createObjectURL(blob);
+    const ext = extForMime(r.blobMime);
+    const eid = state.currentId || 'session';
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const dl = document.getElementById('audio-download');
+    if (dl) {
+      dl.href = r.blobUrl;
+      dl.download = `bob-mover-${eid}-${ts}.${ext}`;
+      dl.textContent = `⬇ Download (${fmtTimer(Math.floor(elapsedMs / 1000))})`;
+      dl.style.display = '';
+    }
+
+    cleanupAudioRecording(/*keepBlob=*/true);
+    setAudioRecUI('ready');
+
+    // freeze the final waveform (last frame stays visible)
+    const t = document.getElementById('audio-timer');
+    if (t) t.textContent = fmtTimer(Math.floor(elapsedMs / 1000));
+  }
+
+  function cleanupAudioRecording(keepBlob = false) {
+    const r = state.audioRec;
+    if (r.mediaStream) {
+      r.mediaStream.getTracks().forEach((t) => t.stop());
+      r.mediaStream = null;
+    }
+    r.mediaRecorder = null;
+    r.analyser = null;
+    r.chunks = [];
+    if (!keepBlob && r.blobUrl) {
+      try { URL.revokeObjectURL(r.blobUrl); } catch {}
+      r.blobUrl = null;
+    }
+  }
+
   async function logPractice() {
     if (!state.currentId) return;
     const tempo = parseInt(document.getElementById('log-tempo').value) || null;
@@ -992,14 +961,13 @@
     // Initial commit so the badge reflects the restored state
     applyCycle();
     updateBadge(state.cycleCommitted);
-    document.getElementById('tempo').addEventListener('input', (e) => {
-      e.target.dataset.userSet = '1';
-    });
-    document.getElementById('btn-play').addEventListener('click', play);
-    document.getElementById('btn-stop').addEventListener('click', stop);
-    document.getElementById('volume').addEventListener('input', (e) => {
-      setVolume(e.target.value);
-    });
+    const audioRecBtn = document.getElementById('btn-audio-rec');
+    if (audioRecBtn) audioRecBtn.addEventListener('click', startAudioRecording);
+    const audioStopBtn = document.getElementById('btn-audio-stop');
+    if (audioStopBtn) audioStopBtn.addEventListener('click', stopAudioRecording);
+    // Initialise the idle waveform baseline so the canvas isn't blank.
+    setAudioRecUI('idle');
+    drawIdleWaveform();
 
     // Zoom + page controls
     const zOut = document.getElementById('zoom-out');
@@ -1034,10 +1002,7 @@
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === ' ') {
-        e.preventDefault();
-        state.isPlaying ? stop() : play();
-      } else if (e.key === 'ArrowLeft') {
+      if (e.key === 'ArrowLeft') {
         // Shift+Left = previous score page, plain Left = previous exercise
         if (e.shiftKey) { e.preventDefault(); pagePrev(); }
         else document.getElementById('btn-prev').click();

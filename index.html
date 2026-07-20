@@ -19,7 +19,6 @@
       </a>
       <nav class="site-nav">
         <a href="./" class="nav-link active" data-view="browse">Browse</a>
-        <a href="#sheet" class="nav-link" data-view="sheet">Build Sheet <span class="badge" id="nav-count" style="display:none">0</span></a>
         <a href="./practice/" class="nav-link">Practice</a>
         <a href="./history/" class="nav-link">History</a>
       </nav>
@@ -29,9 +28,19 @@
   <main class="container">
     <!-- BROWSE VIEW -->
     <section id="view-browse" class="view active">
+      <div class="browse-topbar">
+        <div class="section-chips" id="section-chips"></div>
+        <div class="stats stats-inline">
+          <span><strong id="match-count">0</strong> matching</span>
+          <span class="dot">·</span>
+          <span><strong id="selected-count">0</strong> selected</span>
+          <button id="toggle-selected-only" class="btn btn-ghost btn-sm" style="display:none">Show only selected</button>
+        </div>
+      </div>
+
       <div class="hero">
         <h2>407 exercise patterns, ready to practice</h2>
-        <p>Every pattern from the Bob Mover Jazz Lexicon, broken out individually. Filter by section, search by title, mark favorites, then build a custom printable practice sheet.</p>
+        <p>Every pattern from the Bob Mover Jazz Lexicon, broken out individually. Filter by section, search by title, save favorites, then jump into a timed practice session.</p>
       </div>
 
       <div class="filter-bar">
@@ -42,18 +51,21 @@
         </div>
       </div>
 
-      <div class="section-chips" id="section-chips"></div>
-
-      <div class="stats">
-        <span><strong id="match-count">0</strong> matching</span>
-        <span class="dot">·</span>
-        <span><strong id="selected-count">0</strong> selected</span>
-        <button id="toggle-selected-only" class="btn btn-ghost btn-sm" style="display:none">Show only selected</button>
-      </div>
-
-      <div class="action-bar" id="action-bar" style="display:none">
-        <div><strong id="action-count">0</strong> selected — ready to build a sheet</div>
-        <a href="#sheet" class="btn btn-primary">Build practice sheet →</a>
+      <div class="start-here" id="start-here">
+        <a class="start-card" href="./practice/?id=1">
+          <span class="start-icon">①</span>
+          <div>
+            <div class="start-title">Just getting started?</div>
+            <div class="start-sub">Begin with exercise #1 — a foundational chromatic pattern.</div>
+          </div>
+        </a>
+        <a class="start-card" href="./practice/?id=256">
+          <span class="start-icon">②</span>
+          <div>
+            <div class="start-title">Want to dig in?</div>
+            <div class="start-sub">Try the II–V–I essentials — the most-used patterns in jazz.</div>
+          </div>
+        </a>
       </div>
 
       <div class="grid" id="exercise-grid"></div>
@@ -61,108 +73,7 @@
         <p>No exercises match your filters.</p>
       </div>
     </section>
-
-    <!-- SHEET BUILDER VIEW -->
-    <section id="view-sheet" class="view">
-      <a href="./" class="back-link">← Back to browse</a>
-      <h2>Build a Practice Sheet</h2>
-      <p class="subtitle">Select exercises, customize the sheet, and download a printable PDF.</p>
-
-      <div class="sheet-layout">
-        <div class="sheet-left">
-          <div class="card">
-            <input type="text" id="sheet-search" placeholder="Search exercises to add…" class="input">
-            <div class="section-chips" id="sheet-section-chips"></div>
-          </div>
-
-          <div class="card scrollable">
-            <div class="picker-grid" id="picker-grid"></div>
-            <p class="hint" id="picker-hint"></p>
-          </div>
-        </div>
-
-        <div class="sheet-right">
-          <div class="card">
-            <h3>Quick add</h3>
-            <div class="quick-add">
-              <button class="btn btn-secondary" data-add-random="5">+5 random</button>
-              <button class="btn btn-secondary" data-add-random="10">+10 random</button>
-              <button class="btn btn-secondary" data-add-random="15">+15 random</button>
-              <button class="btn btn-secondary" data-add-random="20">+20 random</button>
-            </div>
-            <div class="quick-add-section">
-              <p class="hint">From a section:</p>
-              <div class="section-buttons" id="section-buttons"></div>
-            </div>
-          </div>
-
-          <div class="card">
-            <h3>Sheet options</h3>
-            <div class="form-row">
-              <label>Title</label>
-              <input type="text" id="sheet-title" value="Practice Sheet" class="input">
-            </div>
-            <div class="form-row">
-              <label>Subtitle</label>
-              <input type="text" id="sheet-subtitle" placeholder="e.g. Today's II-V-I practice" class="input">
-            </div>
-            <label class="checkbox">
-              <input type="checkbox" id="opt-title-page" checked> Include title page
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" id="opt-notes" checked> Include notes & tracking
-            </label>
-          </div>
-
-          <div class="card">
-            <div class="card-header">
-              <h3>Selected (<span id="sheet-count">0</span>)</h3>
-              <button id="sheet-clear" class="link-danger">Clear</button>
-            </div>
-            <div class="selected-list scrollable" id="selected-list"></div>
-          </div>
-
-          <div class="card">
-            <h3>Transpose across all keys</h3>
-            <p class="hint">Generate a sheet with one exercise rendered 12 times — once in each key.</p>
-            <div class="form-row">
-              <label>Mode</label>
-              <select id="opt-allkeys-mode" class="input">
-                <option value="chromatic">Chromatic (C, C#, D … B)</option>
-                <option value="min3-cycle5">Minor 3rds, cycle of 5ths (C, G, D, A …)</option>
-              </select>
-            </div>
-            <label class="checkbox">
-              <input type="checkbox" id="opt-allkeys-flats"> Prefer flats (Db vs C#)
-            </label>
-            <button id="generate-allkeys" class="btn btn-primary btn-block" disabled>
-              Generate 12-Key Sheet
-            </button>
-            <a id="download-allkeys-link" class="btn btn-secondary btn-block" style="display:none" download>
-              ↓ Download 12-Key PDF
-            </a>
-            <p id="allkeys-status" class="hint"></p>
-          </div>
-
-          <button id="generate-pdf" class="btn btn-primary btn-block" disabled>
-            Generate PDF
-          </button>
-          <a id="download-link" class="btn btn-secondary btn-block" style="display:none" download>
-            ↓ Download PDF
-          </a>
-        </div>
-      </div>
-    </section>
   </main>
-
-  <!-- Exercise detail modal -->
-  <div class="modal" id="detail-modal" style="display:none">
-    <div class="modal-backdrop"></div>
-    <div class="modal-content">
-      <button class="modal-close" id="modal-close">×</button>
-      <div id="modal-body"></div>
-    </div>
-  </div>
 
   <script src="app.js"></script>
 </body>

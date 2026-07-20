@@ -83,15 +83,17 @@
   color: var(--ink-500);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 8px;
-  border-bottom: 1px solid var(--ink-200);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ink-300);
+  background: var(--ink-50);
 }
 .history-table td {
-  padding: 8px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--ink-100);
   color: var(--ink-700);
+  vertical-align: top;
 }
-.history-table tr:hover td {
+.history-table tbody tr:hover td {
   background: var(--brass-50);
 }
 .history-table .ex-link {

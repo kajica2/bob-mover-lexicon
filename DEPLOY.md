@@ -13,7 +13,7 @@ This app is a single Python process serving HTML/JS/MusicXML/PDF. It deploys to 
    - **"Empty Project"** — once created, drag this folder into the deploy UI
 4. Railway auto-detects:
    - `runtime.txt` → Python 3.11
-   - `requirements.txt` → installs `reportlab` + `music21`
+   - `requirements.txt` → installs `music21`
    - `Procfile` → runs `python3 server.py`
 5. Wait ~2 min for build + first deploy
 6. Click **"Generate Domain"** to get a public URL like `https://bob-mover-lexicon.up.railway.app`
@@ -62,7 +62,7 @@ Then expose 8080 with your reverse proxy / tunnel.
 The full `lexicon-web/` directory is what's pushed:
 - `server.py` (16KB) — the Python HTTP server
 - `db.py` (9KB) — SQLite layer
-- `requirements.txt` — `reportlab`, `music21`
+- `requirements.txt` — `music21`
 - `exercises.json` (200KB) — all 407 exercise metadata
 - `exercises_images/` (22MB) — 407 cropped PNGs
 - `musicxml/` (17MB) — 407 Audiveris MusicXML files
