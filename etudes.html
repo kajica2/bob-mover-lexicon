@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Etudes — Bob Mover Jazz Lexicon</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="etudes.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎷</text></svg>">
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="./" class="brand">
+        <span class="brand-icon">🎷</span>
+        <div>
+          <h1>Bob Mover Jazz Lexicon</h1>
+          <p class="brand-sub">Etudes · Compose &amp; Generate</p>
+        </div>
+      </a>
+      <nav class="site-nav">
+        <a href="./" class="nav-link" data-view="browse">Browse</a>
+        <a href="./practice/" class="nav-link">Practice</a>
+        <a href="./etudes.html" class="nav-link active" data-view="etudes">Etudes</a>
+        <a href="./history/" class="nav-link">History</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="view active">
+      <div class="hero">
+        <h2>Etudes</h2>
+        <p>Stitch 2–12 exercises into a single combined piece. Composer mode for fine control over each segment's transpose, or Generator mode for randomised sketches. Saved etudes live in your browser — nothing is sent to a server.</p>
+      </div>
+
+      <!-- Mode selector -->
+      <div class="mode-selector" role="tablist">
+        <button class="mode-tab active" data-mode="composer" role="tab" aria-selected="true">Composer</button>
+        <button class="mode-tab" data-mode="random" role="tab" aria-selected="false">Generator</button>
+      </div>
+
+      <!-- COMPOSER MODE -->
+      <div id="mode-composer" class="mode-pane active">
+        <div class="composer-layout">
+          <section class="composer-controls panel">
+            <div class="composer-row">
+              <label class="composer-field">
+                <span class="label">Section</span>
+                <select id="composer-section" class="input"></select>
+              </label>
+              <label class="composer-field">
+                <span class="label">Etude name</span>
+                <input id="composer-name" class="input" placeholder="My II-V-I sketch">
+              </label>
+            </div>
+            <div class="composer-row">
+              <button id="composer-clear" class="btn btn-ghost">Clear</button>
+              <button id="composer-shuffle" class="btn btn-ghost">Shuffle order</button>
+              <span class="composer-count" id="composer-count">0 exercises selected</span>
+              <button id="composer-generate" class="btn btn-primary">Generate &amp; save</button>
+            </div>
+          </section>
+
+          <section class="composer-list panel">
+            <div class="composer-list-toolbar">
+              <input id="composer-search" class="input" placeholder="Search titles…">
+              <span id="composer-list-summary" class="muted"></span>
+            </div>
+            <div id="composer-exercises" class="composer-exercises"></div>
+          </section>
+        </div>
+      </div>
+
+      <!-- RANDOM MODE -->
+      <div id="mode-random" class="mode-pane">
+        <section class="random-controls panel">
+          <div class="composer-row">
+            <label class="composer-field">
+              <span class="label">Section</span>
+              <select id="random-section" class="input"></select>
+            </label>
+            <label class="composer-field">
+              <span class="label">Number of exercises</span>
+              <select id="random-count" class="input">
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4" selected>4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+                <option value="10">10</option>
+                <option value="12">12</option>
+              </select>
+            </label>
+            <label class="composer-field">
+              <span class="label">Semitone spread (per-ex random ±N)</span>
+              <select id="random-spread" class="input">
+                <option value="0">0 (all in original key)</option>
+                <option value="2">±2 (a whole step)</option>
+                <option value="4" selected>±4 (a major 3rd)</option>
+                <option value="7">±7 (a perfect 5th)</option>
+                <option value="12">±12 (an octave)</option>
+              </select>
+            </label>
+          </div>
+          <div class="composer-row">
+            <button id="random-generate" class="btn btn-primary">Generate</button>
+            <span class="muted">Preview below — save once you like it.</span>
+          </div>
+          <div id="random-preview" class="random-preview"></div>
+        </section>
+      </div>
+
+      <!-- SAVED ETUDES LIST -->
+      <section class="saved-etudes panel">
+        <div class="saved-etudes-header">
+          <h3>Saved etudes <span id="etudes-count" class="muted">(0)</span></h3>
+          <button id="etudes-clear-all" class="btn btn-ghost btn-sm">Clear all</button>
+        </div>
+        <div id="etudes-list" class="etudes-list">
+          <p class="muted" id="etudes-empty">No saved etudes yet.</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="etudes-store.js"></script>
+  <script src="etudes-stitch.js"></script>
+  <script src="etudes.js"></script>
+</body>
+</html>

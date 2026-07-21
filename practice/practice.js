@@ -328,6 +328,16 @@
 
   async function loadExercise(id) {
     stop(); // stop any playing
+
+    // Etude load path: client-side stitched MusicXML from IndexedDB.
+    // Etude IDs are prefixed "etude_" and don't exist in exercises.json,
+    // so we branch out before the favorites/exercises.json lookups and
+    // skip the cycle/range-clamp flow (etudes are baked-in final scores).
+    if (typeof id === 'string' && id.indexOf('etude_') === 0) {
+      await loadEtude(id);
+      return;
+    }
+
     state.currentId = id;
     // Check favorite status
     if (state.currentId) {
@@ -394,6 +404,63 @@
     loadExerciseHistory(id);
     // Re-evaluate cycle against the new score + instrument range
     if (typeof applyCycle === 'function') applyCycle();
+  }
+
+  // Etude loader: reads the stitched MusicXML from IndexedDB and renders
+  // it through Verovio. Skips the favorites API, exercises.json lookup,
+  // cycle/range-clamp, and practice-history fetch — an etude is its own
+  // finished piece (no source exercises, no range to clamp against).
+  async function loadEtude(id) {
+    if (!window.etudesStore) {
+      document.getElementById('score-container').innerHTML =
+        '<div class="score-loading">Etudes store unavailable. Reload the page.</div>';
+      return;
+    }
+    let etude;
+    try {
+      etude = await window.etudesStore.getEtude(id);
+    } catch (e) {
+      console.error('Etude load failed:', e);
+      document.getElementById('score-container').innerHTML =
+        '<div class="score-loading">Could not load etude.</div>';
+      return;
+    }
+    if (!etude) {
+      document.getElementById('score-container').innerHTML =
+        '<div class="score-loading">Etude not found in this browser. It was saved on another device or the storage was cleared.</div>';
+      return;
+    }
+    state.currentId = id;
+    // Update URL without reload
+    const newUrl = new URL(window.location);
+    newUrl.searchParams.set('id', id);
+    window.history.replaceState({}, '', newUrl);
+
+    document.getElementById('ex-num').textContent = '';
+    document.getElementById('ex-title').textContent = etude.name || 'Etude';
+    document.getElementById('ex-section').textContent = 'Etudes';
+    document.getElementById('ex-page').textContent =
+      (etude.exerciseIds || []).length + ' exercises · ' +
+      (etude.noteCount || 0) + ' notes';
+
+    // Favorites: etudes don't have favorites. Hide the star.
+    const favBtn = document.getElementById('btn-favorite');
+    if (favBtn) {
+      favBtn.style.visibility = 'hidden';
+    }
+
+    document.getElementById('score-container').innerHTML = '<div class="score-loading">Loading notation…</div>';
+    try {
+      await renderScore(etude.musicxml);
+    } catch (e) {
+      document.getElementById('score-container').innerHTML =
+        '<div class="score-loading">Could not render etude.<br><small>' + e.message + '</small></div>';
+    }
+    // No queue / history / cycle for etudes (they're finished pieces).
+    const queueEl = document.getElementById('session-queue');
+    if (queueEl) queueEl.innerHTML = '<p class="muted">Etudes don\'t use the queue.</p>';
+    const recentEl = document.getElementById('recent-list');
+    if (recentEl) recentEl.innerHTML = '<p class="muted">No practice log for etudes yet.</p>';
   }
 
   async function loadExerciseHistory(id) {
@@ -958,20 +1025,35 @@
   async function init() {
     await loadExercises();
 
-    // Get initial exercise from URL or default to #1
+    // Get initial exercise from URL or default to #1. Etudes have string IDs
+    // ("etude_<uuid>") that aren't in exercises.json, so we keep those as
+    // strings and pass them to loadExercise unchanged.
     const url = new URL(window.location);
-    const initialId = parseInt(url.searchParams.get('id') || '1', 10);
+    const idParam = url.searchParams.get('id');
+    let initialId;
+    if (idParam && idParam.indexOf('etude_') === 0) {
+      initialId = idParam;
+    } else {
+      initialId = parseInt(idParam || '1', 10);
+    }
 
     // Wire up controls
     document.getElementById('btn-prev').addEventListener('click', () => {
+      // Etudes don't have a prev/next — they're finished pieces.
+      if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
       const idx = state.exercises.findIndex((e) => e.id === state.currentId);
       if (idx > 0) loadExercise(state.exercises[idx - 1].id);
     });
     document.getElementById('btn-next').addEventListener('click', () => {
+      if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
       const idx = state.exercises.findIndex((e) => e.id === state.currentId);
       if (idx < state.exercises.length - 1) loadExercise(state.exercises[idx + 1].id);
     });
     document.getElementById('instrument').addEventListener('change', () => {
+      // Etudes are baked-in final scores; their range is whatever the user
+      // chose when generating. Re-rendering them with the active instrument
+      // would just cycle through Verovio's clef rendering, not the data.
+      if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
       if (state.currentId) {
         loadExercise(state.currentId);
         // Re-evaluate cycle against new instrument range
@@ -1019,6 +1101,10 @@
   }
 
   document.getElementById('transpose').addEventListener('change', () => {
+    // Etudes are baked-in — the user's chosen semitones are part of the
+    // stitched MusicXML. Transposing here would only re-render the existing
+    // pitches via Verovio, not change the data.
+    if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
     if (state.currentId) loadExercise(state.currentId);
   });
 
