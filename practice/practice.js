@@ -439,9 +439,15 @@
     document.getElementById('ex-num').textContent = '';
     document.getElementById('ex-title').textContent = etude.name || 'Etude';
     document.getElementById('ex-section').textContent = 'Etudes';
-    document.getElementById('ex-page').textContent =
-      (etude.exerciseIds || []).length + ' exercises · ' +
-      (etude.noteCount || 0) + ' notes';
+    // Pattern-generated etudes have no exerciseIds (mode='pattern'); show
+    // the source label instead. Stitched etudes always have a count.
+    var exCount = (etude.exerciseIds || []).length;
+    var sourceLabel = etude.source === 'pattern' ? 'pattern-generated'
+      : etude.source === 'composer' ? 'composed' : 'random';
+    var label = exCount > 0
+      ? exCount + ' exercises · ' + (etude.noteCount || 0) + ' notes'
+      : sourceLabel + ' · ' + (etude.noteCount || 0) + ' notes';
+    document.getElementById('ex-page').textContent = label;
 
     // Favorites: etudes don't have favorites. Hide the star.
     const favBtn = document.getElementById('btn-favorite');

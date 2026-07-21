@@ -72,17 +72,16 @@
   }
 
   // Save (or overwrite) an etude. `record.id` is assigned if missing.
-  // Returns the assigned id.
+  // Returns the assigned id. exerciseIds is optional: pattern-generated
+  // etudes have no source exercises (their content is the etude itself).
   async function saveEtude(record) {
     if (!record) throw new Error('saveEtude: record is required');
-    if (!record.exerciseIds || !record.exerciseIds.length) {
-      throw new Error('saveEtude: exerciseIds is required and non-empty');
-    }
     if (!record.musicxml) {
       throw new Error('saveEtude: musicxml is required');
     }
     if (!record.id) record.id = newId();
     if (!record.createdAt) record.createdAt = new Date().toISOString();
+    if (!record.exerciseIds) record.exerciseIds = [];
     if (!record.semitones || record.semitones.length !== record.exerciseIds.length) {
       // Default: 0 semitones per exercise if the caller didn't supply them
       const out = [];

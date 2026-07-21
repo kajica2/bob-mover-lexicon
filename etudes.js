@@ -40,6 +40,7 @@
       renderComposer();
       wireComposerControls();
       wireRandomControls();
+      wirePatternLibrary();
       wireEtudesActions();
       refreshSavedEtudes();
     });
@@ -274,6 +275,147 @@
     document.getElementById('random-generate').addEventListener('click', generateRandomPreview);
   }
 
+  // ---------- Pattern Library mode ----------
+  // Constraint-based generator: deterministic, no ML. Uses the user's saved
+  // playing range (from window.getEffectiveRange) to keep generated notes
+  // within what's playable for them.
+  function populatePatternControls() {
+    var keySel = document.getElementById('pattern-key');
+    keySel.innerHTML = '';
+    window.patternGenerator.KEYS.forEach(function (k) {
+      var opt = document.createElement('option');
+      opt.value = k;
+      opt.textContent = k;
+      keySel.appendChild(opt);
+    });
+    // Sensible default: pick a key the user might already be playing in
+    if (!keySel.value) keySel.value = 'F';
+  }
+
+  function getPatternRange() {
+    // Pull from the user's saved instrument range, or fall back to a
+    // sensible alto-sax default (Ab2-E5).
+    var r = null;
+    if (typeof window.getEffectiveRange === 'function') {
+      var cur = document.getElementById('instrument') ? document.getElementById('instrument').value : null;
+      if (cur) r = window.getEffectiveRange(cur);
+    }
+    if (!r) r = { lowMidi: 56, highMidi: 76 }; // Ab2..E5 default
+    return r;
+  }
+
+  function generatePatternPreview() {
+    var opts = {
+      key: document.getElementById('pattern-key').value,
+      pattern: document.getElementById('pattern-rhythm').value,
+      difficulty: document.getElementById('pattern-difficulty').value,
+      bars: parseInt(document.getElementById('pattern-bars').value, 10),
+    };
+    var range = getPatternRange();
+    opts.lowMidi = range.lowMidi;
+    opts.highMidi = range.highMidi;
+    try {
+      var result = window.patternGenerator.generate(opts);
+    } catch (e) {
+      console.error('pattern generate failed', e);
+      toast('Could not generate: ' + e.message, true);
+      return;
+    }
+    state.pattern = state.pattern || {};
+    state.pattern.lastPreview = {
+      opts: opts,
+      musicxml: result.musicxml,
+      noteCount: result.noteCount,
+      range: result.range,
+    };
+    renderPatternPreview();
+  }
+
+  function renderPatternPreview() {
+    var box = document.getElementById('pattern-preview');
+    var prev = state.pattern && state.pattern.lastPreview;
+    if (!prev) {
+      box.classList.remove('visible');
+      return;
+    }
+    box.classList.add('visible');
+    box.innerHTML = '';
+    var h = document.createElement('h4');
+    h.textContent = 'Preview · ' + prev.opts.key + ' · ' +
+      prev.opts.pattern + ' · ' + prev.opts.difficulty + ' · ' +
+      prev.opts.bars + ' bar' + (prev.opts.bars > 1 ? 's' : '');
+    box.appendChild(h);
+
+    var meta = document.createElement('p');
+    meta.className = 'muted';
+    meta.style.margin = '0 0 8px';
+    meta.innerHTML = '<strong>' + prev.noteCount + '</strong> notes · range MIDI ' +
+      prev.range.low + '–' + prev.range.high;
+    box.appendChild(meta);
+
+    var actions = document.createElement('div');
+    actions.className = 'preview-actions';
+    var nameInput = document.createElement('input');
+    nameInput.className = 'input';
+    nameInput.placeholder = 'Name this pattern etude';
+    var defaultName = prev.opts.key + ' ' + prev.opts.pattern +
+      ' (' + prev.opts.bars + ' bar' + (prev.opts.bars > 1 ? 's' : '') + ')';
+    nameInput.value = defaultName;
+    actions.appendChild(nameInput);
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', function () {
+      savePatternEtude(nameInput.value || defaultName);
+    });
+    actions.appendChild(saveBtn);
+
+    var regenBtn = document.createElement('button');
+    regenBtn.className = 'btn btn-ghost';
+    regenBtn.textContent = 'Re-roll';
+    regenBtn.addEventListener('click', generatePatternPreview);
+    actions.appendChild(regenBtn);
+
+    box.appendChild(actions);
+  }
+
+  async function savePatternEtude(name) {
+    var prev = state.pattern && state.pattern.lastPreview;
+    if (!prev) {
+      toast('Click Generate first.', true);
+      return;
+    }
+    var id = window.etudesStore.newId();
+    try {
+      await window.etudesStore.saveEtude({
+        id: id,
+        name: name,
+        // Pattern-generated etudes have no exerciseIds. The etude is its
+        // own thing; users navigate to it via the saved-etudes list.
+        exerciseIds: [],
+        semitones: [],
+        mode: 'pattern',
+        source: 'pattern',
+        musicxml: prev.musicxml,
+        noteCount: prev.noteCount,
+      });
+    } catch (e) {
+      console.error('savePatternEtude failed', e);
+      toast('Could not save: ' + e.message, true);
+      return;
+    }
+    toast('Saved "' + name + '" — opening Practice…');
+    setTimeout(function () {
+      window.location.href = '/practice/?id=' + encodeURIComponent(id);
+    }, 600);
+  }
+
+  function wirePatternLibrary() {
+    populatePatternControls();
+    document.getElementById('pattern-generate').addEventListener('click', generatePatternPreview);
+  }
+
   function generateRandomPreview() {
     const section = document.getElementById('random-section').value;
     const count = parseInt(document.getElementById('random-count').value, 10);
@@ -448,8 +590,14 @@
     const parts = et.exerciseIds || [];
     const notes = et.noteCount || (et.musicxml ? window.etudesStitch.countNotes(et.musicxml) : 0);
     const date = et.createdAt ? new Date(et.createdAt).toLocaleDateString() : '';
+    // Pattern-generated etudes have no source exercises; show the source label.
+    const sourceLabel = et.source === 'pattern' ? 'pattern-generated'
+      : et.source === 'composer' ? 'composed' : 'random';
+    const exLabel = parts.length > 0
+      ? '<strong>' + parts.length + '</strong> exercises · '
+      : sourceLabel + ' · ';
     meta.innerHTML =
-      '<strong>' + parts.length + '</strong> exercises · ' +
+      exLabel +
       '<strong>' + notes + '</strong> notes · ' +
       (date ? date : '');
     info.appendChild(name);
