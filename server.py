@@ -308,6 +308,102 @@ def clamp_notes_to_range(xml_string, low_midi, high_midi):
     return new_xml, stats
 
 
+def swap_to_bass_clef(xml_string):
+    """Rewrite every <clef> in the score from treble (G/line 2) to bass
+    (F/line 4). Handles the four shapes MusicXML uses:
+
+      <clef><sign>G</sign><line>2</line></clef>
+      <clef><sign>G</sign><line>2</line><clef-octave-change>...</clef-octave-change></clef>
+      <clef print-object="no"><sign>G</sign><line>2</line></clef>
+      (and the same with different attribute ordering)
+
+    The simplest robust swap: regex over each <clef>...</clef> block;
+    replace <sign>G</sign> with <sign>F</sign> and <line>2</line> with
+    <line>4</line>, leaving everything else (attributes, clef-octave-change)
+    untouched.
+
+    Used when the user picks a bass instrument so the score reads in their
+    clef instead of treble.
+    """
+    import re
+    if not xml_string:
+        return xml_string
+
+    clef_re = re.compile(r"<clef\b[^>]*>(.*?)</clef>", re.DOTALL)
+
+    def rewrite(match):
+        body = match.group(1)
+        new_body = body
+        new_body = re.sub(
+            r"<sign>\s*G\s*</sign>",
+            "<sign>F</sign>",
+            new_body,
+            count=1,
+        )
+        new_body = re.sub(
+            r"<line>\s*2\s*</line>",
+            "<line>4</line>",
+            new_body,
+            count=1,
+        )
+        if new_body == body:
+            return match.group(0)  # no treble clef inside; leave alone
+        return "<clef>" + new_body + "</clef>"
+
+    return clef_re.sub(rewrite, xml_string)
+
+
+def strip_extra_clefs(xml_string):
+    """Remove <clef> elements from every measure EXCEPT the first.
+
+    The cycle path deep-copies each iteration of the source measures, and
+    the source MusicXML carries a <clef> on its first measure. After a
+    cycle, every iteration's first measure ends up with its own <clef>,
+    which Verovio renders as redundant clef glyphs at the start of each
+    key on the cycled score. Removing all but the first clef leaves a
+    clean score that only sets the clef once at the very start.
+
+    Operates on the raw MusicXML string via regex. Idempotent.
+    """
+    import re
+    if not xml_string:
+        return xml_string
+
+    # Walk each <measure ...>...</measure> block in order. On the first
+    # measure we keep its clef; on subsequent measures we strip ALL clef
+    # blocks. The measure-block detection uses `<measure ` (followed by
+    # space or `>`) so it does NOT split `<measure-numbering>` (which
+    # lives inside <print> within the first measure).
+    parts = re.split(r'(<measure[\s>])', xml_string)
+    out = [parts[0]]
+    saw_first = False
+    for i in range(1, len(parts), 2):
+        tag = parts[i]
+        body = parts[i + 1] if i + 1 < len(parts) else ''
+        out.append(tag)
+        m_end = re.search(r'</measure>', body)
+        if not m_end:
+            out.append(body)
+            continue
+        measure_text = body[:m_end.end()]
+        rest = body[m_end.end():]
+        if saw_first:
+            # Subsequent measures: strip ALL clef blocks entirely.
+            measure_text = re.sub(
+                r'<clef\b[^>]*>.*?</clef>',
+                '',
+                measure_text,
+                flags=re.DOTALL,
+            )
+        # First measure is left as-is (it keeps its own clef block
+        # verbatim, no shifting of attributes). Subsequent measures get
+        # their clefs dropped above.
+        out.append(measure_text)
+        out.append(rest)
+        saw_first = True
+    return ''.join(out)
+
+
 def inject_title_into_musicxml(xml_string, exercise_id, title, section=None,
                                 section_name=None):
     """Inject <work><work-title>...</work-title></work> into the score so
@@ -377,7 +473,11 @@ def insert_line_breaks(xml_string, measures_per_line=4):
     )
     # Walk measures in order, insert <print new-system="yes"/> after every
     # measures_per_line-th one EXCEPT after the very last measure.
-    parts = re.split(r'(<measure\b)', xml_string)
+    # IMPORTANT: match `<measure ` (followed by space/attribute) — NOT
+    # `<measure-numbering>`, which is a child element that lives inside
+    # the first measure. Without this distinction the function would
+    # count print marks inside <print>...</print> blocks as measures.
+    parts = re.split(r'(<measure[\s>])', xml_string)
     out = [parts[0]]
     count = 0
     # First pass: count total measures
@@ -490,6 +590,7 @@ def get_musicxml_with_title(exercise_id, transpose_semitones=0):
     except Exception:
         pass
     xml = strip_score_junk(xml)
+    xml = strip_extra_clefs(xml)
     xml = insert_line_breaks(xml, 4)
     return xml, ctype
 
@@ -528,7 +629,13 @@ INSTRUMENT_OFFSETS = {
     "bari": 9,   # bari sax
     "trumpet": 2,
     "clarinet": 2,
+    "bass": 0,   # bass (acoustic/electric) — concert pitch, non-transposing
 }
+
+# Which instruments get the score rendered in bass clef instead of treble.
+# All other instruments use whatever clef music21 / the source MusicXML
+# carries (currently treble for every exercise in this library).
+BASS_CLEF_INSTRUMENTS = {"bass"}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -564,6 +671,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             xml, ctype = get_musicxml_with_title(eid, semitones)
             if xml is None:
                 return self.send_json({"error": "MusicXML not available for this exercise"}, 404)
+            # Optional user range (from the range modal). Out-of-range notes
+            # are octave-shifted so the score always reads in the player's
+            # register. Sent by the Practice page whenever the user has a
+            # range saved; absent otherwise (cycle path uses a different
+            # mechanism via the JSON body).
+            try:
+                user_low  = int(qs.get("low",  [""])[0] or 0) or None
+            except (TypeError, ValueError):
+                user_low = None
+            try:
+                user_high = int(qs.get("high", [""])[0] or 0) or None
+            except (TypeError, ValueError):
+                user_high = None
+            if user_low is not None and user_high is not None and user_low > user_high:
+                user_low, user_high = user_high, user_low
+            if user_low is not None and user_high is not None:
+                xml, _ = clamp_notes_to_range(xml, user_low, user_high)
+            # Bass clef swap for bass-family instruments
+            if instrument in BASS_CLEF_INSTRUMENTS and xml is not None:
+                xml = swap_to_bass_clef(xml)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -713,6 +840,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # transposition in its measure layout.
         if xml is not None and user_low is not None and user_high is not None:
             xml, _clamp_stats = clamp_notes_to_range(xml, user_low, user_high)
+        # Bass clef swap. Done after transposition + clamp so the resulting
+        # score reads in bass clef with notes already in the player's
+        # register. Only fires for instruments in BASS_CLEF_INSTRUMENTS.
+        instrument_for_clef = payload.get("instrument", "concert")
+        if xml is not None and instrument_for_clef in BASS_CLEF_INSTRUMENTS:
+            xml = swap_to_bass_clef(xml)
         # Inject the exercise title into the returned XML (cycled or not)
         if xml is not None:
             try:
@@ -728,6 +861,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 xml = inject_title_into_musicxml(xml, eid, "", None, None)
             if xml is not None:
                 xml = strip_score_junk(xml)
+                xml = strip_extra_clefs(xml)
                 xml = insert_line_breaks(xml, 4)
         if xml is None:
             return self.send_json({"error": "Cycle generation failed"}, 500)

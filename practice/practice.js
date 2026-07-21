@@ -118,6 +118,7 @@
     bari:     { min: 36, max: 69 },  // Db2–A4 (concert), Eb bari
     trumpet:  { min: 52, max: 84 },  // E3–C6 (concert), Bb trumpet
     clarinet: { min: 50, max: 95 },  // D3–Bb6 (concert), Bb clarinet (low E is rare)
+    bass:     { min: 43, max: 55 },  // G2–G3 (concert), bass — concert pitch, bass clef
   };
 
   const CYCLE_MODE_LABELS = {
@@ -311,17 +312,8 @@
         const r = await fetch(`../api/favorites/${id}`);
         if (r.ok) {
           const d = await r.json();
-          if (starBtn) {
-            if (d.favorited) {
-              starBtn.classList.add('favorited');
-              starBtn.textContent = '★';
-              starBtn.title = 'Remove from favorites';
-            } else {
-              starBtn.classList.remove('favorited');
-              starBtn.textContent = '☆';
-              starBtn.title = 'Add to favorites';
-            }
-          }
+          const favBtn = document.getElementById('btn-favorite');
+          applyFavoriteState(favBtn, !!d.favorited);
         }
       } catch (e) {
         console.error('Favorite check failed:', e);
@@ -348,8 +340,22 @@
     const instrument = document.getElementById('instrument').value;
     const transpose = document.getElementById('transpose').value;
     document.getElementById('score-container').innerHTML = '<div class="score-loading">Loading notation…</div>';
+    // Send the active instrument's effective range (saved-or-preset).
+    // The per-instrument range lives in window.rangeInfo (legacy) or
+    // window.getEffectiveRange(instrument) (current). The latter is the
+    // authoritative source for "what range does this instrument use right
+    // now"; window.rangeInfo is kept in sync for downstream listeners.
+    let rangeParams = '';
+    if (typeof window.getEffectiveRange === 'function') {
+      const r = window.getEffectiveRange(instrument);
+      if (r && typeof r.lowMidi === 'number' && typeof r.highMidi === 'number') {
+        rangeParams = `&low=${r.lowMidi}&high=${r.highMidi}`;
+      }
+    } else if (window.rangeInfo && typeof window.rangeInfo.lowMidi === 'number') {
+      rangeParams = `&low=${window.rangeInfo.lowMidi}&high=${window.rangeInfo.highMidi}`;
+    }
     try {
-      const url = `../api/musicxml/${id}?instrument=${instrument}&transpose=${transpose}`;
+      const url = `../api/musicxml/${id}?instrument=${instrument}&transpose=${transpose}${rangeParams}`;
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const xml = await r.text();
@@ -949,11 +955,51 @@
         if (typeof applyCycle === 'function') applyCycle();
       }
     });
-    document.getElementById('transpose').addEventListener('change', () => {
-      if (state.currentId) loadExercise(state.currentId);
-    });
+    // Favorite button (the star in the player header). Clicking toggles
+    // the favorite state on the server and flips the star's visual state.
+    const favBtn = document.getElementById('btn-favorite');
+    if (favBtn) {
+      favBtn.addEventListener('click', async () => {
+        if (!state.currentId) return;
+        // Optimistic UI flip — read current state from the .favorited
+        // class so we know which way to send.
+        const willFavorite = !favBtn.classList.contains('favorited');
+        favBtn.disabled = true;
+        try {
+          const method = willFavorite ? 'POST' : 'DELETE';
+          const r = await fetch(`../api/favorites/${state.currentId}`, { method });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const d = await r.json();
+          applyFavoriteState(favBtn, d.favorited);
+        } catch (e) {
+          console.error('Favorite toggle failed:', e);
+        } finally {
+          favBtn.disabled = false;
+        }
+      });
+    }
 
-    // Cycle controls — dropdown/bars are STAGED, then committed by the
+    // Reflect the server's favorite state on the star button.
+  function applyFavoriteState(btn, isFav) {
+    if (!btn) return;
+    if (isFav) {
+      btn.classList.add('favorited');
+      btn.textContent = '★';
+      btn.title = 'Remove from favorites';
+      btn.setAttribute('aria-label', 'Remove from favorites');
+    } else {
+      btn.classList.remove('favorited');
+      btn.textContent = '☆';
+      btn.title = 'Add to favorites';
+      btn.setAttribute('aria-label', 'Add to favorites');
+    }
+  }
+
+  document.getElementById('transpose').addEventListener('change', () => {
+    if (state.currentId) loadExercise(state.currentId);
+  });
+
+  // Cycle controls — dropdown/bars are STAGED, then committed by the
     // Apply button. Persisted across sessions.
     const cycleModeSel = document.getElementById('cycle-mode');
     const cycleBarsInp = document.getElementById('cycle-bars');
@@ -1158,7 +1204,14 @@
   var changeLink = document.getElementById('range-change-link');
   if (changeLink) {
     changeLink.addEventListener('click', function () {
-      if (typeof window.openRangeModal === 'function') window.openRangeModal();
+      if (typeof window.openRangeModal === 'function') {
+        // Pre-select the currently-playing instrument so the modal opens
+        // on that instrument's saved range.
+        var cur = document.getElementById('instrument');
+        window.openRangeModal({
+          preferredInstrument: cur ? cur.value : null
+        });
+      }
     });
   }
 

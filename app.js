@@ -88,6 +88,15 @@
     grid.querySelectorAll('.ex-card').forEach((el) => {
       const id = parseInt(el.dataset.id, 10);
       el.querySelector('.ex-img').addEventListener('click', () => toggleSelect(id));
+      // The star button is its own toggle target. Stop propagation so
+      // clicking the star doesn't also fire the image click above.
+      const star = el.querySelector('.select-star');
+      if (star) {
+        star.addEventListener('click', function (e) {
+          e.stopPropagation();
+          toggleSelect(id);
+        });
+      }
     });
     // Update status indicators
     updateStatusIndicators(filtered);
@@ -125,7 +134,10 @@
       <div class="ex-card ${isSel ? 'selected' : ''}" data-id="${e.id}">
         <div class="ex-img">
           <img src="exercises_images/${String(e.id).padStart(4, '0')}.png" alt="#${e.id}: ${escapeHtml(e.title)}" loading="lazy">
-          <div class="select-dot">${isSel ? '✓' : '+'}</div>
+          <button class="select-star ${isSel ? 'favorited' : ''}" data-toggle-fav="${e.id}" type="button" aria-label="${isSel ? 'Remove from favorites' : 'Add to favorites'}" title="${isSel ? 'Remove from favorites' : 'Add to favorites'}">
+            <span class="select-star-icon">${isSel ? '★' : '☆'}</span>
+            <span class="select-star-label">${isSel ? 'Added to favorites' : 'Add to favorites'}</span>
+          </button>
         </div>
         <div class="ex-meta">
           <div class="ex-row1">

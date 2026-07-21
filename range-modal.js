@@ -1,35 +1,46 @@
 /* Register-range modal — shown on first visit, persisted in localStorage.
  *
- * Gating model: on every page load, if `jazz_lex_range` is absent from
- * localStorage, the body is locked behind a full-viewport modal. The user
- * picks an instrument preset (which auto-fills sensible low/high notes in
- * scientific pitch), adjusts the note selectors if they want, and confirms.
- * The modal is dismissed; the range is persisted; subsequent loads skip
- * the modal entirely. A "Change range" affordance in the chrome re-opens
- * it on demand.
+ * Per-instrument range storage: the user can pick any subset of supported
+ * instruments and save a custom low/high note range for each one. The
+ * Practice page reads the active instrument's effective range (saved or
+ * preset default) and sends it with every score load so the server can
+ * clamp notes outside the user's register.
  *
- * Single self-contained file. Loaded once on every page. Mounts its own
- * DOM into the document body on DOMContentLoaded.
+ * Storage schema (jazz_lex_ranges): an object keyed by instrument id.
+ *   {
+ *     "tenor": { lowMidi: 44, highMidi: 76, lowName: "Ab2", highName: "E5" },
+ *     "bass":  { lowMidi: 43, highMidi: 55, lowName: "G2",  highName: "G3" }
+ *   }
  *
- * Public API (window.rangeInfo):
- *   - instrument: 'concert' | 'soprano' | 'alto' | 'tenor' | 'bari' | 'trumpet' | 'clarinet'
- *   - lowMidi:    integer (MIDI note number, e.g. 44 = Ab2)
- *   - highMidi:   integer
- *   - lowName:    scientific-pitch string (e.g. 'Ab2')
- *   - highName:   scientific-pitch string
+ * First-visit gate: when the per-instrument map is empty (or only the
+ * legacy single-instrument key is present), the body is locked behind a
+ * full-viewport modal until the user picks an instrument and confirms a
+ * range. The modal saves under the chosen instrument's key. Other
+ * instruments fall back to their preset range until the user explicitly
+ * customizes them via the "change" affordance in the Practice header.
  *
- *   openRangeModal()  - re-open the modal even if a range is set
- *   setRange(r)       - programmatic set (used by the modal itself + tests)
- *   clearRange()      - clear the persisted range (forces re-prompt)
+ * Legacy migration: if the older single-instrument key (jazz_lex_range)
+ * is present, fold it into the new map under its `instrument` field and
+ * delete it.
+ *
+ * Public API (window.*):
+ *   - rangeInfo:           { instrument, lowMidi, highMidi, lowName, highName }
+ *                          or null. The range that was last saved/confirmed.
+ *   - openRangeModal(opts) — re-open the modal even if a range is set.
+ *                          opts.preferredInstrument pre-selects an instrument.
+ *   - getEffectiveRange(i) — return the saved-or-preset range for instrument i.
+ *   - setRange(r)          — programmatic set (used by tests / debugging).
+ *   - clearRange()         — clear all saved ranges (forces re-prompt).
+ *   - rangePresets         — the static INSTRUMENT_PRESETS map.
+ *   - midiToName / nameToMidi — scientific-pitch conversion helpers.
  */
 (function () {
   'use strict';
 
-  const STORAGE_KEY = 'jazz_lex_range';
-
-  // Per-instrument sensible defaults (concert-pitch MIDI note numbers).
-  // Source: common method-book ranges; the user can override either bound.
-  // Lowest MIDI = A0 (21); highest usable MIDI on the system is C8 (108).
+  // Per-instrument range presets (concert-pitch MIDI note numbers). Used as
+  // defaults when the user hasn't customized a given instrument's range.
+  // Source: common method-book ranges; the user can override either bound
+  // in the modal.
   const INSTRUMENT_PRESETS = {
     concert:  { label: 'Concert pitch',     low: 21,  high: 108, hint: 'Full piano range — no clamp' },
     soprano:  { label: 'Soprano Sax / Bb',  low: 56,  high: 100, hint: 'Ab3 – E6 (concert)' },
@@ -38,6 +49,7 @@
     bari:     { label: 'Bari Sax / Eb',     low: 36,  high: 69,  hint: 'Db2 – A4 (concert)' },
     trumpet:  { label: 'Trumpet / Bb',      low: 52,  high: 84,  hint: 'E3 – C6 (concert)' },
     clarinet: { label: 'Clarinet / Bb',    low: 50,  high: 95,  hint: 'D3 – Bb6 (concert)' },
+    bass:     { label: 'Bass',              low: 43,  high: 55,  hint: 'G2 – G3 (concert) — shown in bass clef' },
   };
 
   // Scientific-pitch MIDI conversion. C4 = 60, A4 = 69.
@@ -61,7 +73,6 @@
     const octave = parseInt(m[3], 10);
     const baseIdx = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[letter];
     let pc = baseIdx + (accidental === '#' ? 1 : accidental === 'b' ? -1 : 0);
-    // Cb = B (-1 mod 12 = 11)
     if (pc < 0) pc += 12;
     return (octave + 1) * 12 + pc;
   }
@@ -69,38 +80,95 @@
     return typeof n === 'number' && isFinite(n) && n >= 0 && n <= 127;
   }
 
-  // ---------- storage ----------
+  // ---------- storage (per-instrument) ----------
 
-  function readRange() {
+  const STORAGE_KEY = 'jazz_lex_ranges';
+  const OLD_STORAGE_KEY = 'jazz_lex_range';
+
+  function readAllRanges() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
+      if (!raw) return {};
       const obj = JSON.parse(raw);
-      if (!obj || !isValidMidi(obj.lowMidi) || !isValidMidi(obj.highMidi)) return null;
-      if (obj.lowMidi > obj.highMidi) return null;
-      if (!INSTRUMENT_PRESETS[obj.instrument]) return null;
-      return obj;
+      return (obj && typeof obj === 'object') ? obj : {};
     } catch {
-      return null;
+      return {};
     }
   }
-  function writeRange(r) {
+  function writeAllRanges(map) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(r));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
     } catch (e) {
-      console.warn('range-modal: could not persist range', e);
+      console.warn('range-modal: could not persist ranges', e);
     }
+  }
+  function readRangeForInstrument(instrument) {
+    const map = readAllRanges();
+    const r = map[instrument];
+    if (!r || !isValidMidi(r.lowMidi) || !isValidMidi(r.highMidi)) return null;
+    if (r.lowMidi > r.highMidi) return null;
+    if (!r.lowName) r.lowName = midiToName(r.lowMidi);
+    if (!r.highName) r.highName = midiToName(r.highMidi);
+    return r;
+  }
+  function writeRangeForInstrument(instrument, r) {
+    const map = readAllRanges();
+    map[instrument] = {
+      lowMidi: r.lowMidi,
+      highMidi: r.highMidi,
+      lowName: r.lowName || midiToName(r.lowMidi),
+      highName: r.highName || midiToName(r.highMidi),
+    };
+    writeAllRanges(map);
+  }
+  function migrateLegacy() {
+    try {
+      const oldRaw = localStorage.getItem(OLD_STORAGE_KEY);
+      if (!oldRaw) return;
+      const old = JSON.parse(oldRaw);
+      if (!old || !isValidMidi(old.lowMidi) || !isValidMidi(old.highMidi)) {
+        localStorage.removeItem(OLD_STORAGE_KEY);
+        return;
+      }
+      if (!INSTRUMENT_PRESETS[old.instrument]) {
+        localStorage.removeItem(OLD_STORAGE_KEY);
+        return;
+      }
+      writeRangeForInstrument(old.instrument, old);
+      localStorage.removeItem(OLD_STORAGE_KEY);
+    } catch {}
   }
   function clearRange() {
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
+    try { localStorage.removeItem(OLD_STORAGE_KEY); } catch {}
+  }
+  function hasAnySavedRange() {
+    const map = readAllRanges();
+    return Object.keys(map).length > 0;
+  }
+
+  // The effective range for an instrument: the user's saved value if
+  // present, otherwise the preset default. Always returns a complete
+  // range object (never null) for a known instrument.
+  function getEffectiveRange(instrument) {
+    if (!INSTRUMENT_PRESETS[instrument]) return null;
+    const saved = readRangeForInstrument(instrument);
+    if (saved) {
+      saved.instrument = instrument;
+      return saved;
+    }
+    const preset = INSTRUMENT_PRESETS[instrument];
+    return {
+      instrument: instrument,
+      lowMidi: preset.low,
+      highMidi: preset.high,
+      lowName: midiToName(preset.low),
+      highName: midiToName(preset.high),
+    };
   }
 
   // ---------- DOM building ----------
 
-  // Build the options for the note selector: 12 note letters × 7 octaves
-  // (MIDI 21..104, A0..E7). One option per (letter, octave) — labelled
-  // with the scientific-pitch name and (small) the MIDI number for
-  // technical users.
   function noteSelectOptions(minMidi, maxMidi) {
     const out = [];
     for (let n = 21; n <= 104; n++) {
@@ -164,7 +232,6 @@
   function populateNoteSelects(overlay, lowMidi, highMidi) {
     const low = overlay.querySelector('#range-low');
     const high = overlay.querySelector('#range-high');
-    // The lowest selector is allowed to go as low as A0 (21); highest as E7 (104)
     low.innerHTML = noteSelectOptions(21, 104);
     high.innerHTML = noteSelectOptions(21, 104);
     low.value = String(lowMidi);
@@ -189,12 +256,30 @@
     const overlay = buildModal();
     document.body.appendChild(overlay);
 
-    // Pre-fill from existing range if present, else from instrument default
-    const stored = opts.existingRange || readRange();
-    let instrument = stored && stored.instrument;
-    let lowMidi = stored && stored.lowMidi;
-    let highMidi = stored && stored.highMidi;
-    if (!instrument || !INSTRUMENT_PRESETS[instrument]) instrument = 'tenor';
+    // Pre-fill logic:
+    //   - opts.existingRange overrides everything (caller-supplied)
+    //   - else: read this instrument's effective range. opts.preferredInstrument
+    //     lets the caller (e.g. Practice page "change" link) hint which
+    //     instrument to pre-select.
+    //   - last-resort default: tenor.
+    const preferredInstrument = opts.preferredInstrument ||
+      (opts.existingRange && opts.existingRange.instrument);
+    let instrument = preferredInstrument;
+    if (!INSTRUMENT_PRESETS[instrument]) instrument = 'tenor';
+
+    let lowMidi, highMidi;
+    let hasSaved = false;
+    if (opts.existingRange) {
+      instrument = opts.existingRange.instrument || instrument;
+      lowMidi = opts.existingRange.lowMidi;
+      highMidi = opts.existingRange.highMidi;
+      hasSaved = true;
+    } else {
+      const r = getEffectiveRange(instrument);
+      lowMidi = r.lowMidi;
+      highMidi = r.highMidi;
+      hasSaved = !!readRangeForInstrument(instrument);
+    }
     if (!isValidMidi(lowMidi)) lowMidi = INSTRUMENT_PRESETS[instrument].low;
     if (!isValidMidi(highMidi)) highMidi = INSTRUMENT_PRESETS[instrument].high;
 
@@ -205,9 +290,8 @@
     validateRange(overlay);
 
     sel.addEventListener('change', function () {
-      const preset = INSTRUMENT_PRESETS[sel.value];
-      if (!preset) return;
-      populateNoteSelects(overlay, preset.low, preset.high);
+      const r = getEffectiveRange(sel.value);
+      if (r) populateNoteSelects(overlay, r.lowMidi, r.highMidi);
       refreshHint(overlay);
       validateRange(overlay);
     });
@@ -217,16 +301,15 @@
     overlay.querySelector('#range-confirm').addEventListener('click', function () {
       const result = validateRange(overlay, /*strict*/ true);
       if (!result.ok) return;
+      const instrument = sel.value;
       const range = {
-        instrument: sel.value,
+        instrument: instrument,
         lowMidi: parseInt(overlay.querySelector('#range-low').value, 10),
         highMidi: parseInt(overlay.querySelector('#range-high').value, 10),
       };
       range.lowName = midiToName(range.lowMidi);
       range.highName = midiToName(range.highMidi);
-      writeRange(range);
-      // Keep the global in sync so pages that read window.rangeInfo
-      // before the event handler runs see the new value.
+      writeRangeForInstrument(instrument, range);
       window.rangeInfo = range;
       lockBody(false);
       overlay.remove();
@@ -234,14 +317,13 @@
       window.dispatchEvent(new CustomEvent('range-changed', { detail: range }));
     });
 
-    // Trap focus inside the modal — first focusable element gets focus.
     setTimeout(function () {
       const first = overlay.querySelector('select, button');
       if (first) first.focus();
     }, 0);
-    // Esc closes the modal only when there is an existing range (i.e. user
-    // is editing, not being onboarded).
-    if (stored) {
+    // Esc closes the modal only when there is an existing range for the
+    // current instrument (i.e. user is editing, not being onboarded).
+    if (hasSaved) {
       overlay.addEventListener('keydown', function (e) {
         if (e.key === 'Escape') {
           overlay.remove();
@@ -280,24 +362,41 @@
 
   // ---------- public API ----------
 
-  // First-visit gate. Called on every page load.
+  // First-visit gate. Called on every page load. Migrates the legacy
+  // single-instrument key (if present) into the per-instrument map, then
+  // prompts if and only if no range has ever been saved.
   function init() {
-    const existing = readRange();
-    if (!existing) {
+    migrateLegacy();
+    const has = hasAnySavedRange();
+    if (!has) {
       lockBody(true);
-      openModal({ existingRange: null });
+      openModal({});
     }
-    // Always expose the current range (or null) on window for other code.
-    window.rangeInfo = existing || null;
+    // Expose the most recently saved range as the active one. If multiple
+    // instruments have saved ranges, this is the last one written (we
+    // don't track order; this is a sensible default and the Practice
+    // page uses getEffectiveRange() to look up the active instrument's
+    // range explicitly).
+    const map = readAllRanges();
+    const keys = Object.keys(map);
+    if (keys.length > 0) {
+      const last = map[keys[keys.length - 1]];
+      last.instrument = keys[keys.length - 1];
+      window.rangeInfo = last;
+    } else {
+      window.rangeInfo = null;
+    }
   }
 
-  window.openRangeModal = function (onConfirm) {
-    openModal({ onConfirm: onConfirm });
+  window.openRangeModal = function (opts) {
+    if (typeof opts === 'function') opts = { onConfirm: opts };
+    openModal(opts || {});
   };
   window.setRange = function (r) {
-    writeRange(r);
-    r.lowName = midiToName(r.lowMidi);
-    r.highName = midiToName(r.highMidi);
+    if (!r || !r.instrument) return;
+    r.lowName = r.lowName || midiToName(r.lowMidi);
+    r.highName = r.highName || midiToName(r.highMidi);
+    writeRangeForInstrument(r.instrument, r);
     window.rangeInfo = r;
     window.dispatchEvent(new CustomEvent('range-changed', { detail: r }));
   };
@@ -305,6 +404,7 @@
     clearRange();
     window.rangeInfo = null;
   };
+  window.getEffectiveRange = getEffectiveRange;
   window.rangePresets = INSTRUMENT_PRESETS;
   window.midiToName = midiToName;
   window.nameToMidi = nameToMidi;
