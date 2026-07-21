@@ -224,6 +224,29 @@
       }
       const svg = state.verovio.renderToSVG(state.zoomPage, {});
       container.innerHTML = svg;
+      // Fallback: if the served MusicXML was broken upstream (Audiveris
+      // extraction produced a stub), Verovio renders an SVG with no notes.
+      // The static PNG (rendered directly from the source PDF) still has the
+      // real notation, so swap to it. Triggered for the 6 known-broken
+      // exercises (17, 79, 132, 152, 168, 229) whose served MusicXML
+      // contains <3 note elements total. Static PNG does NOT respect
+      // transpose/cycle/range, but it's still better than empty staff.
+      const sourceNoteCount = (state.rawXml || '').match(/<note\b/g)?.length || 0;
+      if (sourceNoteCount < 3 && state.currentId) {
+        const fallback = document.createElement('div');
+        fallback.className = 'score-fallback';
+        fallback.innerHTML =
+          '<div class="score-fallback-banner">' +
+          'Source image shown — MusicXML for this exercise is incomplete ' +
+          '(upstream Audiveris extraction). Transpose / cycle / range are ' +
+          'not applied to the image.' +
+          '</div>' +
+          '<img src="../exercises_images/' +
+          String(state.currentId).padStart(4, '0') +
+          '.png" alt="Exercise ' + state.currentId + ' notation" />';
+        container.innerHTML = '';
+        container.appendChild(fallback);
+      }
       const pageEl = document.getElementById('zoom-page-indicator');
       if (pageEl) {
         pageEl.textContent = state.zoomPageCount > 1
