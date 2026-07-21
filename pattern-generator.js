@@ -50,8 +50,17 @@
   };
 
   // MIDI helpers. octave = scientific octave (C4 = middle C = MIDI 60).
+  // We accept flat-prefixed step names ('Bb', 'Eb', 'Ab') so the scales
+  // tables can read naturally; we normalise by stripping the flat before
+  // computing the offset.
   function stepToOffset(step) {
-    return { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 }[step];
+    const NATURAL = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+    const FLAT_DELTA = { B: -1, E: -1, A: -1, D: -1, G: -1, C: -1, F: -1 };
+    if (step in NATURAL) return NATURAL[step];
+    if (step.length === 2 && step[1] === 'b' && step[0] in NATURAL) {
+      return NATURAL[step[0]] + (FLAT_DELTA[step[0]] || -1);
+    }
+    throw new Error('Unknown step: ' + step);
   }
   function pitchToMidi(step, alter, octave) {
     return (octave + 1) * 12 + stepToOffset(step) + (alter || 0);
