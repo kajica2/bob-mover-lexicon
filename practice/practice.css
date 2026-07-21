@@ -460,6 +460,80 @@
   align-items: center;
   gap: 4px;
 }
+.audio-player {
+  height: 36px;
+  max-width: 320px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.audio-player::-webkit-media-controls-panel {
+  background: var(--ink-50);
+  border-radius: 4px;
+}
+
+/* My Takes list (side panel) */
+.takes-list {
+  margin-top: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.take-item {
+  background: var(--ink-50);
+  border: 1px solid var(--ink-100);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.take-item:hover {
+  border-color: var(--brass-300);
+  background: var(--brass-50);
+}
+.take-item .take-player {
+  width: 100%;
+  height: 36px;
+}
+.take-item .take-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+.take-item .take-id {
+  color: var(--brass-700);
+  font-weight: 600;
+}
+.take-item .take-dur {
+  color: var(--ink-600);
+}
+.take-item .take-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ink-500);
+}
+.take-item .take-del {
+  background: none;
+  border: none;
+  color: var(--ink-400);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 6px;
+  line-height: 1;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.take-item .take-del:hover {
+  color: #dc2626;
+  background: var(--brass-50);
+}
 
 /* History item with delete button — refined for clarity */
 .recent-item {

@@ -12,13 +12,6 @@ A self-contained web app to browse, practice, and track progress on the **407 ex
 - "Add to queue" button on every card to build a practice session
 - Practice status indicators (`✓ 2×`) on cards you've worked on
 
-### 📄 Practice Sheet Builder
-- 2-column picker with search and section filters
-- Quick-add: +5/+10/+15/+20 random, +3 from any section
-- Sheet options: title, subtitle, title page toggle, notes/tracking toggle
-- Reorder exercises with ↑↓ buttons
-- Generate PDF → server-side with title page, exercise images, and practice tracking (checkboxes, tempo, date, notes lines)
-
 ### 🎵 Practice Player (`/practice/`)
 - **Real Verovio-rendered notation** (not PDF crops) — sharp, scalable, professional
 - **Transposition engine** powered by music21:

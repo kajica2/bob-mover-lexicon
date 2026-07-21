@@ -210,6 +210,104 @@ def cycle_musicxml(mxl_path, mode, bars):
         return None
 
 
+# MusicXML <step> letter -> base pitch class within an octave. Sharps/flats
+# are added via <alter> in the same <pitch> element.
+_STEP_TO_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def _midi_from_pitch(step, alter, octave):
+    pc = _STEP_TO_PC.get(step)
+    if pc is None:
+        return None
+    if alter in ("1", "+1"):
+        pc += 1
+    elif alter in ("-1"):
+        pc -= 1
+    return (octave + 1) * 12 + pc
+
+
+def clamp_notes_to_range(xml_string, low_midi, high_midi):
+    """Walk every <pitch> in the score. If its MIDI note falls outside
+    [low_midi, high_midi], shift the <octave> down (or up) until it fits.
+
+    Notes *below* the range go up an octave; notes *above* the range go
+    down an octave. The function returns the (possibly rewritten) XML
+    string and a dict with counts. The user's request was specifically
+    "transpose down an octave" for out-of-range notes; this implementation
+    handles both edges because the same logic naturally moves a too-high
+    note down while a too-low note would get pushed up.
+
+    Operates on the raw MusicXML string via regex — no music21 round-trip.
+    Fast, idempotent, and safe to call on a string that may or may not
+    already contain octaves at the right value.
+    """
+    import re
+    if not xml_string:
+        return xml_string, {"moved": 0, "low": 0, "high": 0, "unchanged": 0}
+
+    stats = {"moved": 0, "low_moved_up": 0, "high_moved_down": 0, "unchanged": 0}
+
+    # Match each <pitch>...</pitch> block. The XML for a pitch is small;
+    # re.sub with a callback is fine.
+    pitch_re = re.compile(
+        r'(<pitch\b[^>]*>)(.*?)(</pitch>)',
+        re.DOTALL,
+    )
+
+    def replace_pitch(match):
+        open_tag, body, close_tag = match.group(1), match.group(2), match.group(3)
+        step_m = re.search(r'<step>\s*([A-Ga-g])\s*</step>', body)
+        oct_m  = re.search(r'<octave>\s*(-?\d+)\s*</octave>', body)
+        alt_m  = re.search(r'<alter>\s*(-?\d+)\s*</alter>', body)
+        if not step_m or not oct_m:
+            return match.group(0)  # malformed — leave alone
+        step = step_m.group(1).upper()
+        try:
+            octave = int(oct_m.group(1))
+        except ValueError:
+            return match.group(0)
+        alter = alt_m.group(1) if alt_m else "0"
+        midi = _midi_from_pitch(step, alter, octave)
+        if midi is None:
+            return match.group(0)
+
+        # Shift octave up if too low, down if too high. Always decrement at
+        # least once when the note is out of range — the while loop
+        # condition only checks the lower octave, but a single decrement
+        # of an out-of-range note is always needed.
+        if midi < low_midi:
+            octave += 1
+            midi = _midi_from_pitch(step, alter, octave)
+            while midi < low_midi and octave < 9:
+                octave += 1
+                midi = _midi_from_pitch(step, alter, octave)
+            stats["low_moved_up"] += 1
+            stats["moved"] += 1
+        elif midi > high_midi:
+            octave -= 1
+            midi = _midi_from_pitch(step, alter, octave)
+            while midi > high_midi and octave > 0:
+                octave -= 1
+                midi = _midi_from_pitch(step, alter, octave)
+            stats["high_moved_down"] += 1
+            stats["moved"] += 1
+        else:
+            stats["unchanged"] += 1
+
+        # Re-emit the pitch block with the new octave. Reuse the original
+        # whitespace layout to keep diffs minimal.
+        new_body = re.sub(
+            r'<octave>\s*-?\d+\s*</octave>',
+            '<octave>%d</octave>' % octave,
+            body,
+            count=1,
+        )
+        return open_tag + new_body + close_tag
+
+    new_xml = pitch_re.sub(replace_pitch, xml_string)
+    return new_xml, stats
+
+
 def inject_title_into_musicxml(xml_string, exercise_id, title, section=None,
                                 section_name=None):
     """Inject <work><work-title>...</work-title></work> into the score so
@@ -582,6 +680,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             bars = 1
         if mode not in ("off", "chromatic", "min3", "4ths", "5ths"):
             return self.send_json({"error": f"Unknown mode: {mode}"}, 400)
+        # Optional user range (from the range modal). If supplied, every
+        # <pitch> outside [low, high] is shifted by an octave (or more)
+        # until it fits. Bad/missing values are silently ignored.
+        try:
+            user_low  = int(payload["low"])  if payload.get("low")  is not None else None
+        except (KeyError, TypeError, ValueError):
+            user_low = None
+        try:
+            user_high = int(payload["high"]) if payload.get("high") is not None else None
+        except (KeyError, TypeError, ValueError):
+            user_high = None
+        if user_low is not None and user_high is not None and user_low > user_high:
+            user_low, user_high = user_high, user_low  # swap if reversed
         mxl_path = MUSICXML_DIR / f"{eid:04d}.mxl"
         if not mxl_path.exists():
             return self.send_json({"error": "MusicXML not available"}, 404)
@@ -596,6 +707,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 cycled = cycle_musicxml(mxl_path, mode, bars)
                 if cycled is not None:
                     xml = cycled
+        # Clamp every note to the user's register range. Out-of-range notes
+        # are shifted down (or up) by an octave. Done before the title +
+        # line-break post-processing so the rendered score reflects the
+        # transposition in its measure layout.
+        if xml is not None and user_low is not None and user_high is not None:
+            xml, _clamp_stats = clamp_notes_to_range(xml, user_low, user_high)
         # Inject the exercise title into the returned XML (cycled or not)
         if xml is not None:
             try:

@@ -271,6 +271,143 @@ h1, h2, h3, h4 {
   line-height: 1.4;
 }
 
+/* ===== Register-range modal (blocks first visit; persisted) ===== */
+body.range-modal-locked {
+  overflow: hidden;
+}
+.range-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(14, 13, 12, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.range-modal {
+  background: white;
+  border-radius: 12px;
+  max-width: 560px;
+  width: 100%;
+  padding: 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--brass-200);
+}
+.range-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.range-modal-icon {
+  font-size: 36px;
+  line-height: 1;
+  color: var(--brass-700);
+  flex-shrink: 0;
+}
+.range-modal-head h2 {
+  font-size: 22px;
+  color: var(--ink-900);
+  margin: 0 0 6px;
+}
+.range-modal-sub {
+  font-size: 14px;
+  color: var(--ink-600);
+  margin: 0;
+  line-height: 1.5;
+}
+.range-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.range-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.range-label {
+  font-size: 12px;
+  color: var(--ink-600);
+  font-weight: 500;
+}
+.range-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--ink-200);
+  border-radius: 6px;
+  background: white;
+  color: var(--ink-800);
+  font-size: 14px;
+  font-family: 'SF Mono', Monaco, monospace;
+  outline: none;
+  transition: all 0.15s;
+}
+.range-input:focus {
+  border-color: var(--brass-400);
+  box-shadow: 0 0 0 3px rgba(184, 137, 39, 0.15);
+}
+.range-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 480px) {
+  .range-row { grid-template-columns: 1fr; }
+  .range-modal { padding: 20px; }
+}
+.range-hint {
+  font-size: 11px;
+  color: var(--ink-500);
+  font-style: italic;
+}
+.range-validation {
+  font-size: 12px;
+  color: var(--ink-500);
+  min-height: 16px;
+}
+.range-validation.error {
+  color: #dc2626;
+}
+.range-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+.range-confirm {
+  /* same as .btn-primary: outlined brass */
+}
+
+/* Persistent 'your range' indicator in the Practice page header */
+.range-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-600);
+  background: var(--brass-50);
+  border: 1px solid var(--brass-200);
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-family: 'SF Mono', Monaco, monospace;
+  margin-left: 12px;
+}
+.range-indicator .range-change {
+  background: none;
+  border: none;
+  color: var(--brass-700);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 0 0 4px;
+  font-family: inherit;
+  text-decoration: underline;
+}
+.range-indicator .range-change:hover { color: var(--brass-500); }
+
 /* ===== Grid ===== */
 .grid {
   display: grid;

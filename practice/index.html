@@ -36,6 +36,10 @@
               <div class="ex-title-row">
                 <h2 id="ex-num" class="ex-num">#1</h2>
                 <button id="btn-favorite" class="star-btn" title="Add to favorites">☆</button>
+                <span id="range-indicator" class="range-indicator" hidden>
+                  <span id="range-indicator-text"></span>
+                  <button id="range-change-link" class="range-change" type="button">change</button>
+                </span>
               </div>
               <p id="ex-title" class="ex-title">Loading…</p>
               <p class="ex-meta">
@@ -95,6 +99,7 @@
               <button id="btn-audio-stop" class="btn btn-secondary" disabled>⏹ Stop</button>
               <span id="audio-timer" class="record-timer">00:00</span>
               <canvas id="audio-waveform" class="audio-waveform" width="240" height="36" aria-label="Audio waveform"></canvas>
+              <audio id="audio-player" class="audio-player" controls preload="metadata" style="display:none"></audio>
               <a id="audio-download" class="btn btn-secondary btn-sm" style="display:none" download>⬇ Download</a>
             </div>
           </div>
@@ -152,7 +157,7 @@
         </div>
       </div>
 
-      <!-- RIGHT: Queue + history + collections -->
+      <!-- RIGHT: Queue + history + collections + takes -->
       <div class="side-panel">
         <div class="card">
           <details class="side-details" open>
@@ -160,6 +165,17 @@
             <span class="hint" id="queue-count">0</span>
             <p class="hint">Click "Add to queue" on any exercise to build a practice session.</p>
             <div id="queue-list" class="queue-list"></div>
+          </details>
+        </div>
+
+        <div class="card">
+          <details class="side-details" open>
+            <summary><h3>My Takes</h3></summary>
+            <span class="hint" id="takes-count">0</span>
+            <p class="hint">Recordings saved in this browser. Stored locally — not synced.</p>
+            <div id="takes-list" class="takes-list">
+              <div class="empty-state"><div class="empty-icon">🎙</div>No takes yet. Hit Rec to capture one.</div>
+            </div>
           </details>
         </div>
 
@@ -185,6 +201,8 @@
   </main>
 
   <script src="vendor/verovio-toolkit.js"></script>
+  <script src="../range-modal.js"></script>
+  <script src="takes-store.js"></script>
   <script src="practice.js"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">

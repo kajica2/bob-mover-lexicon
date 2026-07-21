@@ -760,7 +760,7 @@
     r.active = false;
     r.startedAt = null;
 
-    // Build a Blob + object URL for download.
+    // Build a Blob + object URL for download + inline playback.
     if (r.blobUrl) { try { URL.revokeObjectURL(r.blobUrl); } catch {} r.blobUrl = null; }
     const blob = new Blob(r.chunks, { type: r.blobMime || 'audio/webm' });
     r.blobUrl = URL.createObjectURL(blob);
@@ -775,12 +775,97 @@
       dl.style.display = '';
     }
 
+    // Wire the inline <audio> player to the same object URL.
+    const player = document.getElementById('audio-player');
+    if (player) {
+      try { player.pause(); } catch {}
+      player.src = r.blobUrl;
+      player.style.display = '';
+      // Reload so metadata (duration) loads — controls then show length.
+      try { player.load(); } catch {}
+    }
+
+    // Persist to IndexedDB so it survives reload, then refresh the list.
+    saveTakeToStore(blob, eid, elapsedMs, r.blobMime, ext).then(function () {
+      renderTakesList();
+    }).catch(function (err) {
+      console.error('take save failed', err);
+    });
+
     cleanupAudioRecording(/*keepBlob=*/true);
     setAudioRecUI('ready');
 
     // freeze the final waveform (last frame stays visible)
     const t = document.getElementById('audio-timer');
     if (t) t.textContent = fmtTimer(Math.floor(elapsedMs / 1000));
+  }
+
+  // Save a finished take to IndexedDB. Swallows + logs errors so the
+  // download path still works even if storage is full / blocked.
+  async function saveTakeToStore(blob, exerciseId, durationMs, mime, ext) {
+    if (!window.takesStore) return;
+    const record = {
+      exerciseId: exerciseId,
+      durationMs: durationMs,
+      mime: mime,
+      size: blob.size,
+      ext: ext,
+      createdAt: new Date().toISOString(),
+      blob: blob,
+    };
+    return window.takesStore.addTake(record);
+  }
+
+  // Render the "My Takes" side panel. Builds object URLs on the fly from
+  // stored Blobs; revokes them on next render to avoid leaks.
+  let _takeUrls = [];
+  function renderTakesList() {
+    const list = document.getElementById('takes-list');
+    const countEl = document.getElementById('takes-count');
+    if (!list || !window.takesStore) return;
+    // Revoke any prior URLs we own before re-rendering.
+    _takeUrls.forEach((u) => { try { URL.revokeObjectURL(u); } catch {} });
+    _takeUrls = [];
+    window.takesStore.listTakes().then(function (all) {
+      // Newest first.
+      all.sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+      if (countEl) countEl.textContent = all.length;
+      if (all.length === 0) {
+        list.innerHTML = '<div class="empty-state"><div class="empty-icon">🎙</div>No takes yet. Hit Rec to capture one.</div>';
+        return;
+      }
+      list.innerHTML = all.map(function (t) {
+        const url = URL.createObjectURL(t.blob);
+        _takeUrls.push(url);
+        const dur = fmtTimer(Math.floor(t.durationMs / 1000));
+        const date = new Date(t.createdAt);
+        const dateStr = date.toLocaleString(undefined, {
+          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+        });
+        const eidLabel = t.exerciseId != null ? ('#' + t.exerciseId) : 'session';
+        return [
+          '<div class="take-item" data-take-id="' + t.id + '">',
+            '<audio class="take-player" controls preload="metadata" src="' + url + '"></audio>',
+            '<div class="take-meta">',
+              '<span class="take-id">#' + t.id + ' · ' + eidLabel + '</span>',
+              '<span class="take-dur">' + dur + '</span>',
+            '</div>',
+            '<div class="take-foot">',
+              '<span class="take-date">' + dateStr + '</span>',
+              '<button class="take-del" data-take-id="' + t.id + '" title="Delete this take">×</button>',
+            '</div>',
+          '</div>'
+        ].join('');
+      }).join('');
+      // Wire delete buttons (re-query because innerHTML replaced them).
+      list.querySelectorAll('.take-del').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const id = parseInt(btn.dataset.takeId, 10);
+          if (!confirm('Delete this take?')) return;
+          window.takesStore.deleteTake(id).then(function () { renderTakesList(); });
+        });
+      });
+    });
   }
 
   function cleanupAudioRecording(keepBlob = false) {
@@ -906,6 +991,11 @@
       const transpose = parseInt((document.getElementById('transpose') || {}).value || '0', 10);
       const mode = cycleModeSel ? cycleModeSel.value : 'off';
       const bars = cycleBarsInp ? Math.max(1, Math.min(12, parseInt(cycleBarsInp.value, 10) || 12)) : 12;
+      // User range (from the range modal). If unset, the server falls back
+      // to the instrument preset range.
+      const userRange = (typeof window.rangeInfo === 'object' && window.rangeInfo)
+        ? { low: window.rangeInfo.lowMidi, high: window.rangeInfo.highMidi }
+        : {};
       // Disable the Apply button + show pending state
       if (cycleApplyBtn) {
         cycleApplyBtn.disabled = true;
@@ -915,7 +1005,7 @@
         const r = await fetch(`../api/musicxml/${state.currentId}/cycle`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode, bars, instrument: instr, transpose }),
+          body: JSON.stringify(Object.assign({ mode, bars, instrument: instr, transpose }, userRange)),
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({ error: r.statusText }));
@@ -1045,6 +1135,31 @@
     await loadRecent();
     await loadCollections();
     renderQueue();
+    renderTakesList();
+    renderRangeIndicator();
+  }
+
+  // Mirror the persisted register range (set by the range-modal first-visit
+  // gate) into the Practice page header. Re-runs whenever the modal saves
+  // a new range (event: 'range-changed').
+  function renderRangeIndicator() {
+    var ind = document.getElementById('range-indicator');
+    var txt = document.getElementById('range-indicator-text');
+    if (!ind || !txt) return;
+    var r = window.rangeInfo;
+    if (!r || !r.lowName || !r.highName) {
+      ind.hidden = true;
+      return;
+    }
+    ind.hidden = false;
+    txt.textContent = r.lowName + ' – ' + r.highName;
+  }
+  window.addEventListener('range-changed', renderRangeIndicator);
+  var changeLink = document.getElementById('range-change-link');
+  if (changeLink) {
+    changeLink.addEventListener('click', function () {
+      if (typeof window.openRangeModal === 'function') window.openRangeModal();
+    });
   }
 
   if (document.readyState === 'loading') {
