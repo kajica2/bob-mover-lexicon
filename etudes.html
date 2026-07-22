@@ -59,11 +59,14 @@
               <button id="composer-clear" class="btn btn-ghost">Clear</button>
               <button id="composer-shuffle" class="btn btn-ghost">Shuffle order</button>
               <span class="composer-count" id="composer-count">0 exercises selected</span>
-              <button id="composer-generate" class="btn btn-primary">Generate &amp; save</button>
+              <button id="composer-generate" class="btn btn-primary">Generate preview</button>
             </div>
             <!-- Pinned selected list: always visible regardless of section
                  or filter, so the user never loses track of their selection. -->
             <div id="composer-selected" class="composer-selected" aria-label="Selected exercises"></div>
+            <!-- Composer preview: shows stitched score + Save / Re-roll
+                 actions after the user clicks Generate preview. -->
+            <div id="composer-preview" class="composer-preview"></div>
           </section>
 
           <section class="composer-list panel">
@@ -160,6 +163,10 @@
             <button id="pattern-generate" class="btn btn-primary">Generate</button>
             <span class="muted">Preview below — save once you like it.</span>
           </div>
+          <!-- Estimated output for the current settings. Live-updates
+               on any knob change so the user knows what range / note
+               density to expect before clicking Generate. -->
+          <div id="pattern-estimate" class="pattern-estimate muted"></div>
           <div id="pattern-preview" class="random-preview"></div>
         </section>
       </div>

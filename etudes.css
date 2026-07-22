@@ -177,6 +177,25 @@
 .composer-selected:empty {
   display: none !important;
 }
+
+/* Composer preview: shows the stitched score + Save/Re-stitch/Discard
+ * after Generate preview. Same visual treatment as the Pattern preview. */
+.composer-preview {
+  display: none;
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--paper, #f8f5ef);
+  border: 1px solid var(--ink-200, #e0d9c8);
+  border-radius: 6px;
+}
+.composer-preview.visible {
+  display: block;
+}
+.composer-preview h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--ink-900, #1a1815);
+}
 .selected-panel-row {
   display: grid;
   grid-template-columns: 24px 24px 50px 36px 1fr 80px 24px;
@@ -315,6 +334,22 @@
   display: block;
   width: 100%;
   height: auto;
+}
+
+/* Live estimate that shows what Generate *will* produce. Updates on any
+ * knob change so the user can tweak settings before committing to a
+ * full generation. */
+.pattern-estimate {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: rgba(80, 120, 200, 0.08);
+  border-left: 3px solid rgba(80, 120, 200, 0.4);
+  border-radius: 0 4px 4px 0;
+  font-size: 13px;
+  color: var(--ink-700, #4a4538);
+}
+.pattern-estimate strong {
+  color: var(--ink-900, #1a1815);
 }
 .random-preview h4 {
   margin: 0 0 8px;

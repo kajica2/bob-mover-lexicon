@@ -349,8 +349,132 @@
       renderComposer();
     });
     document.getElementById('composer-generate').addEventListener('click', function () {
-      generateAndSave('composer');
+      generateComposerPreview();
     });
+  }
+
+  // Composer mode preview: stitches the currently selected exercises
+  // and shows the rendered SVG plus Save / Re-roll actions. Same lazy-
+  // loaded Verovio toolkit as the Random / Pattern previews.
+  function generateComposerPreview() {
+    var box = document.getElementById('composer-preview');
+    if (!box) return;
+    if (state.composer.selected.length < 2) {
+      toast('Pick at least 2 exercises to preview.', true);
+      return;
+    }
+    if (state.composer.selected.length > 12) {
+      toast('Max 12 exercises per etude.', true);
+      return;
+    }
+    var namePreset = (document.getElementById('composer-name').value || '')
+      .trim() || ('Composer: ' + state.composer.selected.length + ' exercises');
+    var picked = state.composer.selected.slice();
+    box.innerHTML = '';
+    box.classList.add('visible');
+    var h = document.createElement('h4');
+    h.textContent = 'Preview · ' + namePreset +
+      ' (' + picked.length + ' exercises)';
+    box.appendChild(h);
+
+    // Inline preview wrapper
+    var previewWrap = document.createElement('div');
+    previewWrap.className = 'pattern-preview-svg';
+    var loadingText = document.createElement('p');
+    loadingText.className = 'muted';
+    loadingText.textContent = 'Stitching score…';
+    previewWrap.appendChild(loadingText);
+    box.appendChild(previewWrap);
+
+    // Stitch then render
+    window.etudesStitch.stitch(
+      picked.map(function (p) { return { id: p.id, semitones: p.semitones || 0 }; }),
+      namePreset
+    ).then(function (xml) {
+      renderSvgForXml(previewWrap, xml);
+      state.composer.lastXml = xml;
+      state.composer.lastName = namePreset;
+    }).catch(function (e) {
+      previewWrap.innerHTML = '<p class="muted">Stitch failed: ' +
+        (e && e.message ? e.message : e) + '</p>';
+    });
+
+    // Actions: Save / Re-roll
+    var actions = document.createElement('div');
+    actions.className = 'preview-actions';
+    var nameInput = document.createElement('input');
+    nameInput.className = 'input';
+    nameInput.placeholder = 'Etude name';
+    nameInput.value = namePreset;
+    nameInput.addEventListener('input', function () {
+      state.composer.lastName = nameInput.value;
+    });
+    actions.appendChild(nameInput);
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = 'Save & open Practice';
+    saveBtn.addEventListener('click', function () {
+      saveComposerEtude(nameInput.value || namePreset);
+    });
+    actions.appendChild(saveBtn);
+
+    var regenBtn = document.createElement('button');
+    regenBtn.className = 'btn btn-ghost';
+    regenBtn.textContent = 'Re-stitch';
+    regenBtn.title = 'Re-stitch with the current exercise list (transpose changes applied)';
+    regenBtn.addEventListener('click', function () {
+      generateComposerPreview();
+    });
+    actions.appendChild(regenBtn);
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-ghost';
+    cancelBtn.textContent = 'Discard';
+    cancelBtn.addEventListener('click', function () {
+      box.classList.remove('visible');
+      box.innerHTML = '';
+      state.composer.lastXml = null;
+    });
+    actions.appendChild(cancelBtn);
+
+    box.appendChild(actions);
+  }
+
+  // Actually save the composer's last previewed XML as an IndexedDB etude.
+  async function saveComposerEtude(name) {
+    var xml = state.composer.lastXml;
+    if (!xml) {
+      toast('Click Generate preview first.', true);
+      return;
+    }
+    name = (name || '').trim() || ('Composer: ' + (state.composer.selected.length || 0) + ' exercises');
+    name = await uniquifyEtudeName(name);
+    // Count notes for the metadata (cheap; just regex the XML string).
+    var noteCount = (xml.match(/<note\b/g) || []).length;
+    var parts = state.composer.selected.map(function (p) {
+      return { id: p.id, semitones: p.semitones || 0 };
+    });
+    var id = window.etudesStore.newId();
+    try {
+      await window.etudesStore.saveEtude({
+        id: id,
+        name: name,
+        exerciseIds: parts.map(function (p) { return p.id; }),
+        semitones: parts.map(function (p) { return p.semitones; }),
+        mode: 'composer',
+        source: 'composer',
+        musicxml: xml,
+        noteCount: noteCount,
+      });
+    } catch (e) {
+      toast('Save failed: ' + e.message, true);
+      return;
+    }
+    toast('Saved "' + name + '" — opening Practice…');
+    setTimeout(function () {
+      window.location.href = '/practice/?id=' + encodeURIComponent(id);
+    }, 600);
   }
 
   // ---------- Random mode ----------
@@ -400,7 +524,7 @@
     return r;
   }
 
-  function generatePatternPreview() {
+  function generatePatternPreview(isReroll) {
     var opts = {
       key: document.getElementById('pattern-key').value,
       pattern: document.getElementById('pattern-rhythm').value,
@@ -423,6 +547,7 @@
       musicxml: result.musicxml,
       noteCount: result.noteCount,
       range: result.range,
+      wasReroll: !!isReroll,
     };
     renderPatternPreview();
   }
@@ -490,7 +615,19 @@
     nameInput.placeholder = 'Name this pattern etude';
     var defaultName = prev.opts.key + ' ' + prev.opts.pattern +
       ' (' + prev.opts.bars + ' bar' + (prev.opts.bars > 1 ? 's' : '') + ')';
-    nameInput.value = defaultName;
+    // Preserve the user's typed name across re-rolls. On a fresh
+    // generation (state.pattern.typedName not set), default the input to
+    // the auto-generated name. On a re-roll, keep whatever the user
+    // has already typed so they don't lose their work.
+    if (prev.wasReroll) {
+      nameInput.value = state.pattern.typedName || defaultName;
+    } else {
+      nameInput.value = defaultName;
+      state.pattern.typedName = defaultName;
+    }
+    nameInput.addEventListener('input', function () {
+      state.pattern.typedName = nameInput.value;
+    });
     actions.appendChild(nameInput);
 
     var saveBtn = document.createElement('button');
@@ -504,7 +641,7 @@
     var regenBtn = document.createElement('button');
     regenBtn.className = 'btn btn-ghost';
     regenBtn.textContent = 'Re-roll';
-    regenBtn.addEventListener('click', generatePatternPreview);
+    regenBtn.addEventListener('click', function () { generatePatternPreview(true); });
     actions.appendChild(regenBtn);
 
     box.appendChild(actions);
@@ -516,11 +653,12 @@
       toast('Click Generate first.', true);
       return;
     }
+    var uniqueName = await uniquifyEtudeName(name);
     var id = window.etudesStore.newId();
     try {
       await window.etudesStore.saveEtude({
         id: id,
-        name: name,
+        name: uniqueName,
         // Pattern-generated etudes have no exerciseIds. The etude is its
         // own thing; users navigate to it via the saved-etudes list.
         exerciseIds: [],
@@ -535,18 +673,87 @@
       toast('Could not save: ' + e.message, true);
       return;
     }
-    toast('Saved "' + name + '" — opening Practice…');
+    toast('Saved "' + uniqueName + '" — opening Practice…');
     setTimeout(function () {
       window.location.href = '/practice/?id=' + encodeURIComponent(id);
     }, 600);
   }
 
-  function wirePatternLibrary() {
-    populatePatternControls();
-    document.getElementById('pattern-generate').addEventListener('click', generatePatternPreview);
+  // Ensure an etude name is unique in the user's saved-etudes list.
+  // If `name` already exists, append " (2)", " (3)", etc. Returns the
+  // first unused variant. Used by all three save paths (Composer /
+  // Random / Pattern) so the user can save rapidly without thinking
+  // about naming, and gets sensibly-suffixed copies when they do.
+  async function uniquifyEtudeName(name) {
+    var all = [];
+    try { all = await window.etudesStore.listEtudes(); }
+    catch (e) { return name; }
+    var taken = {};
+    all.forEach(function (e) { taken[e.name] = true; });
+    if (!taken[name]) return name;
+    var stripped = name.replace(/ \(\d+\)$/, '');
+    var i = 2;
+    while (taken[stripped + ' (' + i + ')']) i++;
+    return stripped + ' (' + i + ')';
   }
 
-  function generateRandomPreview() {
+  function wirePatternLibrary() {
+    populatePatternControls();
+    updatePatternEstimate();
+    document.getElementById('pattern-generate').addEventListener('click', generatePatternPreview);
+    // Live-update the estimate on any knob change.
+    ['pattern-key', 'pattern-rhythm', 'pattern-difficulty', 'pattern-bars'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', updatePatternEstimate);
+    });
+  }
+
+  // Compute and display an estimate of the upcoming pattern: name, range,
+  // and approx note count. No MusicXML is generated — just knobs in, text out.
+  // Saves the user a Generate click when their settings would produce
+  // something they don't want (e.g. notes outside their range).
+  function updatePatternEstimate() {
+    var box = document.getElementById('pattern-estimate');
+    if (!box) return;
+    var key = document.getElementById('pattern-key').value;
+    var pattern = document.getElementById('pattern-rhythm').value;
+    var difficulty = document.getElementById('pattern-difficulty').value;
+    var bars = parseInt(document.getElementById('pattern-bars').value, 10);
+    var range = getPatternRange();
+    var center = Math.round((range.lowMidi + range.highMidi) / 2);
+    var factorMap = { beginner: 0.5, intermediate: 0.75, advanced: 1.0 };
+    var factor = factorMap[difficulty] || 0.75;
+    var halfRange = Math.round((range.highMidi - range.lowMidi) * factor / 2);
+    var adjLow = Math.max(range.lowMidi, center - halfRange);
+    var adjHigh = Math.min(range.highMidi, center + halfRange);
+    // Approximate note counts: 8ths=8/bar, triplets=12/bar, 16ths=16/bar, mix=avg
+    var perBar = pattern === 'sixteenths' ? 16
+               : pattern === 'triplets'    ? 12
+               : pattern === 'chromatic'   ? 8
+               : /* mix */                     12;
+    var approxNotes = perBar * bars;
+    var humanRange = midiToNoteRange(adjLow, adjHigh);
+    box.innerHTML =
+      'Will generate: <strong>' + key + ' ' + pattern + ' · ' + difficulty +
+      ' · ' + bars + ' bar' + (bars > 1 ? 's' : '') + '</strong>' +
+      ' — ~<strong>' + approxNotes + '</strong> notes,' +
+      ' range <strong>' + humanRange + '</strong>' +
+      ' (MIDI ' + adjLow + '–' + adjHigh + ')';
+  }
+
+  // Format a MIDI range as a human-friendly note name span, e.g.
+  // "F3 – D5". Uses sharp spellings.
+  function midiToNoteRange(low, high) {
+    function n(m) {
+      var oct = Math.floor(m / 12) - 1;
+      var pc = ((m % 12) + 12) % 12;
+      var TABLE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      return TABLE[pc] + oct;
+    }
+    return n(low) + ' – ' + n(high);
+  }
+
+  function generateRandomPreview(isReroll) {
     const section = document.getElementById('random-section').value;
     const count = parseInt(document.getElementById('random-count').value, 10);
     const spread = parseInt(document.getElementById('random-spread').value, 10);
@@ -555,6 +762,14 @@
       toast('Section only has ' + pool.length + ' exercises — pick fewer or another section.', true);
       return;
     }
+    // New pick means: new random sample, drop the cached stitch, reset
+    // the typed-name tracker so the user sees a fresh auto-name.
+    state.random.stitchedXml = null;
+    state.random.wasReroll = !!isReroll;
+    // If this is a fresh pick (not a re-roll), clear the typed-name so
+    // the new etude starts with a fresh auto-name. (On re-rolls the
+    // typed name carries over so the user can keep iterating.)
+    if (!isReroll) state.random.typedName = null;
     // Pick `count` unique random exercises from the pool.
     const indices = [];
     while (indices.length < count) {
@@ -594,11 +809,54 @@
     });
     box.appendChild(list);
 
+    // Inline Verovio preview so the user sees the stitched score before
+    // saving. Reuses loadVerovio (lazy-loaded once). The stitched
+    // MusicXML is cached on state.random.lastXml so re-rolls don't
+    // re-stitch.
+    var previewWrap = document.createElement('div');
+    previewWrap.className = 'pattern-preview-svg';
+    var loadingText = document.createElement('p');
+    loadingText.className = 'muted';
+    loadingText.textContent = 'Stitching score…';
+    previewWrap.appendChild(loadingText);
+    box.appendChild(previewWrap);
+
+    var namePreset = 'Random: §' + (state.random.section || '?') +
+      ' × ' + picked.length + ' exercises';
+    var pickedSnapshot = picked.slice();
+    (function stitchThenRender() {
+      // Memoize the stitch so re-rolls just re-render the SVG.
+      if (!state.random.stitchedXml) {
+        window.etudesStitch.stitch(
+          pickedSnapshot.map(function(p){return {id: p.id, semitones: p.semitones};}),
+          namePreset
+        ).then(function(xml) {
+          state.random.stitchedXml = xml;
+          renderSvgForXml(previewWrap, xml);
+        }).catch(function(e) {
+          previewWrap.innerHTML = '<p class="muted">Stitch failed: ' +
+            (e && e.message ? e.message : e) + '</p>';
+        });
+      } else {
+        renderSvgForXml(previewWrap, state.random.stitchedXml);
+      }
+    })();
+
     const actions = document.createElement('div');
     actions.className = 'preview-actions';
     const nameInput = document.createElement('input');
     nameInput.className = 'input';
     nameInput.placeholder = 'Name this etude (e.g. Random chromatic sketch)';
+    nameInput.value = namePreset;
+    // Preserve typed name across re-rolls.
+    if (state.random.typedName) {
+      nameInput.value = state.random.typedName;
+    } else {
+      state.random.typedName = namePreset;
+    }
+    nameInput.addEventListener('input', function() {
+      state.random.typedName = nameInput.value;
+    });
     actions.appendChild(nameInput);
 
     const saveBtn = document.createElement('button');
@@ -612,10 +870,43 @@
     const regenBtn = document.createElement('button');
     regenBtn.className = 'btn btn-ghost';
     regenBtn.textContent = 'Re-roll';
-    regenBtn.addEventListener('click', generateRandomPreview);
+    regenBtn.addEventListener('click', function () {
+      // New random roll — drop the cached stitch so we get a different score.
+      state.random.stitchedXml = null;
+      state.random.wasReroll = true;
+      generateRandomPreview();
+    });
     actions.appendChild(regenBtn);
 
     box.appendChild(actions);
+  }
+
+  // Render a MusicXML document into the wrapper element using Verovio.
+  // Wrapper is cleared and replaced with the SVG (or an error message).
+  function renderSvgForXml(wrap, xml) {
+    loadVerovio().then(function (v) {
+      try {
+        var tk = new v.toolkit();
+        tk.setOptions({
+          scale: 28,
+          breaks: 'auto',
+          adjustPageHeight: true,
+          justifyVertically: false,
+          spacingSystem: 4,
+          spacingStaff: 2,
+          pageWidth: 1100,
+          pageHeight: 600,
+        });
+        tk.loadData(xml);
+        var svg = tk.renderToSVG(1, {});
+        wrap.innerHTML = svg;
+      } catch (e) {
+        wrap.innerHTML = '<p class="muted">Could not render preview: ' +
+          (e && e.message ? e.message : e) + '</p>';
+      }
+    }).catch(function () {
+      wrap.innerHTML = '<p class="muted">Could not load notation engine.</p>';
+    });
   }
 
   // ---------- Generate & save ----------
@@ -654,6 +945,10 @@
       toast('Could not stitch: ' + e.message, true);
       return;
     }
+
+    // Avoid duplicate names: if "My Sketch" already exists, save as
+    // "My Sketch (2)", "My Sketch (3)", etc.
+    name = await uniquifyEtudeName(name);
 
     const id = window.etudesStore.newId();
     try {
