@@ -61,6 +61,9 @@
               <span class="composer-count" id="composer-count">0 exercises selected</span>
               <button id="composer-generate" class="btn btn-primary">Generate &amp; save</button>
             </div>
+            <!-- Pinned selected list: always visible regardless of section
+                 or filter, so the user never loses track of their selection. -->
+            <div id="composer-selected" class="composer-selected" aria-label="Selected exercises"></div>
           </section>
 
           <section class="composer-list panel">
@@ -127,10 +130,10 @@
             <label class="composer-field">
               <span class="label">Pattern</span>
               <select id="pattern-rhythm" class="input">
-                <option value="chromatic">Chromatic 8ths</option>
+                <option value="chromatic" selected>Chromatic 8ths</option>
                 <option value="triplets">Triplet 8ths</option>
                 <option value="sixteenths">16th-note runs</option>
-                <option value="mix" selected>Mix of all three</option>
+                <option value="mix">Mix of all three</option>
               </select>
             </label>
             <label class="composer-field">
@@ -165,7 +168,10 @@
       <section class="saved-etudes panel">
         <div class="saved-etudes-header">
           <h3>Saved etudes <span id="etudes-count" class="muted">(0)</span></h3>
-          <button id="etudes-clear-all" class="btn btn-ghost btn-sm">Clear all</button>
+          <div class="saved-etudes-toolbar">
+            <input id="etudes-search" class="input" placeholder="Filter by name or source…">
+            <button id="etudes-clear-all" class="btn btn-ghost btn-sm">Clear all</button>
+          </div>
         </div>
         <div id="etudes-list" class="etudes-list">
           <p class="muted" id="etudes-empty">No saved etudes yet.</p>

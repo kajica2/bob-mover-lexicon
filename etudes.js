@@ -29,11 +29,16 @@
     random: {
       lastPreview: null,      // [{id, semitones}, ...]
     },
+    pattern: {
+      lastPreview: null,
+    },
+    savedFilter: '',           // search text for the saved-etudes list
   };
 
   // ---------- Bootstrap ----------
   function init() {
     wireModeTabs();
+    wireSavedListFilter();
     fetchExercises().then(function () {
       populateComposerSection();
       populateRandomSection();
@@ -44,6 +49,27 @@
       wireEtudesActions();
       refreshSavedEtudes();
     });
+  }
+
+  // Lazy-load Verovio (11MB) only when the user actually opens the
+  // Pattern Library tab and clicks Generate. The script is fetched once
+  // and cached on `window.verovio`. Resolves to the toolkit constructor.
+  function loadVerovio() {
+    if (window.verovio && window.verovio.toolkit) {
+      return Promise.resolve(window.verovio);
+    }
+    if (window.__verovioLoading) return window.__verovioLoading;
+    window.__verovioLoading = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'practice/vendor/verovio-toolkit.js';
+      s.onload = function () { resolve(window.verovio); };
+      s.onerror = function () {
+        delete window.__verovioLoading;
+        reject(new Error('Failed to load Verovio toolkit'));
+      };
+      document.head.appendChild(s);
+    });
+    return window.__verovioLoading;
   }
 
   function fetchExercises() {
@@ -108,10 +134,10 @@
     const selectedIds = {};
     state.composer.selected.forEach(function (s) { selectedIds[s.id] = s; });
 
-    // Selected first (in selected order), then unselected (alphabetical by id).
-    const selectedRows = state.composer.selected.slice();
-    const unselectedRows = filtered.filter(function (e) { return !(e.id in selectedIds); });
-    const rows = selectedRows.concat(unselectedRows);
+    // Selected rows are no longer prepended here — they live in the
+    // pinned composer-selected panel so they remain visible regardless of
+    // the current section or filter.
+    const rows = filtered;
 
     document.getElementById('composer-list-summary').textContent =
       filtered.length + ' of ' + all.length + ' in this section';
@@ -175,29 +201,96 @@
       row.appendChild(transposeInput);
       row.appendChild(removeBtn);
       list.appendChild(row);
-
-      // Drag & drop reorder
-      if (isSelected) {
-        handle.addEventListener('dragstart', function (e) {
-          e.dataTransfer.setData('text/plain', String(ex.id));
-          e.dataTransfer.effectAllowed = 'move';
-        });
-        row.addEventListener('dragover', function (e) {
-          if (!e.dataTransfer.types.includes('text/plain')) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-        });
-        row.addEventListener('drop', function (e) {
-          e.preventDefault();
-          const srcId = parseInt(e.dataTransfer.getData('text/plain'), 10);
-          const targetId = ex.id;
-          if (!selectedIds[srcId] || srcId === targetId) return;
-          moveSelected(srcId, targetId);
-        });
-      }
     });
 
+    renderSelectedPanel();
     updateComposerCount();
+  }
+
+  // Render the pinned selection panel (above the section picker, always
+  // visible). Shows the current selection in order, with up/down reorder
+  // buttons and per-row transpose inputs.
+  function renderSelectedPanel() {
+    const panel = document.getElementById('composer-selected');
+    if (!panel) return;
+    panel.innerHTML = '';
+    if (!state.composer.selected.length) {
+      panel.style.display = 'none';
+      return;
+    }
+    panel.style.display = 'block';
+    state.composer.selected.forEach(function (sel, idx) {
+      const ex = state.exercises.find(function (e) { return e.id === sel.id; });
+      const section = ex ? ex.section : '?';
+      const title = ex ? ex.title : 'Unknown exercise';
+      const row = document.createElement('div');
+      row.className = 'selected-panel-row';
+      row.dataset.id = sel.id;
+      // Up / down reorder buttons (also drag the row to reorder)
+      const upBtn = document.createElement('button');
+      upBtn.className = 'selected-reorder';
+      upBtn.textContent = '↑';
+      upBtn.title = 'Move up';
+      upBtn.disabled = idx === 0;
+      upBtn.addEventListener('click', function () { moveSelected(sel.id, sel.id /* placeholder */, idx - 1); });
+      const downBtn = document.createElement('button');
+      downBtn.className = 'selected-reorder';
+      downBtn.textContent = '↓';
+      downBtn.title = 'Move down';
+      downBtn.disabled = idx === state.composer.selected.length - 1;
+      downBtn.addEventListener('click', function () { moveSelected(sel.id, sel.id, idx + 1); });
+      row.appendChild(upBtn);
+      row.appendChild(downBtn);
+      const idCell = document.createElement('span');
+      idCell.className = 'selected-id';
+      idCell.textContent = '#' + sel.id;
+      row.appendChild(idCell);
+      const sectionBadge = document.createElement('span');
+      sectionBadge.className = 'selected-section';
+      sectionBadge.textContent = '§' + section;
+      row.appendChild(sectionBadge);
+      const titleCell = document.createElement('span');
+      titleCell.className = 'selected-title';
+      titleCell.textContent = title;
+      row.appendChild(titleCell);
+      const transposeInput = document.createElement('input');
+      transposeInput.type = 'number';
+      transposeInput.min = -12;
+      transposeInput.max = 12;
+      transposeInput.step = 1;
+      transposeInput.value = sel.semitones || 0;
+      transposeInput.className = 'ex-transpose';
+      transposeInput.title = 'Transpose semitones (-12..+12)';
+      transposeInput.addEventListener('input', function () {
+        updateTranspose(sel.id, parseInt(transposeInput.value, 10) || 0);
+      });
+      row.appendChild(transposeInput);
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'ex-remove';
+      removeBtn.textContent = '×';
+      removeBtn.title = 'Remove from etude';
+      removeBtn.addEventListener('click', function () { toggleSelect(sel.id); });
+      row.appendChild(removeBtn);
+      // Drag handle on the row itself
+      row.draggable = true;
+      row.addEventListener('dragstart', function (e) {
+        e.dataTransfer.setData('text/plain', String(sel.id));
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      row.addEventListener('dragover', function (e) {
+        if (!e.dataTransfer.types.includes('text/plain')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+      row.addEventListener('drop', function (e) {
+        e.preventDefault();
+        const srcId = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        if (!srcId || srcId === sel.id) return;
+        const targetIdx = state.composer.selected.findIndex(function (s) { return s.id === sel.id; });
+        moveSelected(srcId, sel.id, targetIdx);
+      });
+      panel.appendChild(row);
+    });
   }
 
   function toggleSelect(id) {
@@ -212,12 +305,15 @@
     if (sel) sel.semitones = Math.max(-12, Math.min(12, semitones));
   }
 
-  function moveSelected(srcId, targetId) {
+  // Move srcId to the given targetIdx in the selected list.
+  // targetIdx is clamped to [0, length-1].
+  function moveSelected(srcId, _unused, targetIdx) {
     const srcIdx = state.composer.selected.findIndex(function (s) { return s.id === srcId; });
-    const targetIdx = state.composer.selected.findIndex(function (s) { return s.id === targetId; });
-    if (srcIdx < 0 || targetIdx < 0) return;
+    if (srcIdx < 0) return;
     const [moved] = state.composer.selected.splice(srcIdx, 1);
-    state.composer.selected.splice(targetIdx, 0, moved);
+    const len = state.composer.selected.length;  // after splice
+    const clamped = Math.max(0, Math.min(len, targetIdx));
+    state.composer.selected.splice(clamped, 0, moved);
     renderComposer();
   }
 
@@ -352,6 +448,40 @@
     meta.innerHTML = '<strong>' + prev.noteCount + '</strong> notes · range MIDI ' +
       prev.range.low + '–' + prev.range.high;
     box.appendChild(meta);
+
+    // Inline Verovio preview. The 11MB toolkit is loaded on first
+    // generation only, then cached. The SVG goes into a wrapper that
+    // scrolls horizontally for long patterns.
+    var previewWrap = document.createElement('div');
+    previewWrap.className = 'pattern-preview-svg';
+    var previewLoading = document.createElement('p');
+    previewLoading.className = 'muted';
+    previewLoading.textContent = 'Loading notation engine…';
+    previewWrap.appendChild(previewLoading);
+    box.appendChild(previewWrap);
+    loadVerovio().then(function (v) {
+      try {
+        var tk = new v.toolkit();
+        tk.setOptions({
+          scale: 30,
+          breaks: 'auto',
+          adjustPageHeight: true,
+          justifyVertically: false,
+          spacingSystem: 4,
+          spacingStaff: 2,
+          pageWidth: 1100,
+          pageHeight: 600,
+        });
+        tk.loadData(prev.musicxml);
+        var svg = tk.renderToSVG(1, {});
+        previewWrap.innerHTML = svg;
+      } catch (e) {
+        previewWrap.innerHTML = '<p class="muted">Could not render preview: ' +
+          (e && e.message ? e.message : e) + '</p>';
+      }
+    }).catch(function (e) {
+      previewWrap.innerHTML = '<p class="muted">Could not load notation engine.</p>';
+    });
 
     var actions = document.createElement('div');
     actions.className = 'preview-actions';
@@ -552,6 +682,8 @@
   }
 
   // ---------- Saved etudes list ----------
+  // Filter state lives on state.savedFilter. The input is the search box
+  // rendered into the saved-etudes panel by initSavedListFilter().
   async function refreshSavedEtudes() {
     const list = document.getElementById('etudes-list');
     const count = document.getElementById('etudes-count');
@@ -572,35 +704,69 @@
       list.appendChild(p);
       return;
     }
-    all.forEach(function (et) {
+    // Apply filter
+    const filter = (state.savedFilter || '').toLowerCase().trim();
+    const visible = filter
+      ? all.filter(function (et) {
+          return (et.name || '').toLowerCase().indexOf(filter) >= 0 ||
+                 (et.source || '').indexOf(filter) >= 0;
+        })
+      : all;
+    if (!visible.length && filter) {
+      const p = document.createElement('p');
+      p.className = 'muted';
+      p.textContent = 'No etudes match "' + filter + '".';
+      list.appendChild(p);
+      return;
+    }
+    visible.forEach(function (et) {
       list.appendChild(makeEtudeCard(et));
+    });
+  }
+
+  // Wire the saved-etudes search filter input. Called once at boot.
+  function wireSavedListFilter() {
+    const input = document.getElementById('etudes-search');
+    if (!input) return;
+    input.addEventListener('input', function (e) {
+      state.savedFilter = e.target.value;
+      refreshSavedEtudes();
     });
   }
 
   function makeEtudeCard(et) {
     const card = document.createElement('div');
     card.className = 'etude-card';
+    card.dataset.id = et.id;
 
     const info = document.createElement('div');
-    const name = document.createElement('div');
+    info.className = 'etude-info';
+    const titleRow = document.createElement('div');
+    titleRow.className = 'etude-title-row';
+    const name = document.createElement('span');
     name.className = 'etude-name';
     name.textContent = et.name;
+    titleRow.appendChild(name);
+    // Source badge: distinguishes pattern / composed / random at a glance.
+    const sourceBadge = document.createElement('span');
+    sourceBadge.className = 'etude-source-badge source-' + (et.source || 'random');
+    sourceBadge.textContent = et.source === 'pattern' ? 'pattern'
+      : et.source === 'composer' ? 'composed' : 'random';
+    titleRow.appendChild(sourceBadge);
+    info.appendChild(titleRow);
+
     const meta = document.createElement('div');
     meta.className = 'etude-meta';
     const parts = et.exerciseIds || [];
     const notes = et.noteCount || (et.musicxml ? window.etudesStitch.countNotes(et.musicxml) : 0);
     const date = et.createdAt ? new Date(et.createdAt).toLocaleDateString() : '';
-    // Pattern-generated etudes have no source exercises; show the source label.
-    const sourceLabel = et.source === 'pattern' ? 'pattern-generated'
-      : et.source === 'composer' ? 'composed' : 'random';
     const exLabel = parts.length > 0
       ? '<strong>' + parts.length + '</strong> exercises · '
-      : sourceLabel + ' · ';
+      : '';
     meta.innerHTML =
       exLabel +
       '<strong>' + notes + '</strong> notes · ' +
       (date ? date : '');
-    info.appendChild(name);
     info.appendChild(meta);
 
     const practice = document.createElement('a');
@@ -618,6 +784,21 @@
       }
     });
 
+    const dup = document.createElement('button');
+    dup.className = 'btn btn-ghost btn-sm';
+    dup.textContent = 'Duplicate';
+    dup.title = 'Create a copy of this etude';
+    dup.addEventListener('click', function () {
+      const copy = Object.assign({}, et);
+      delete copy.id;
+      copy.name = et.name + ' (copy)';
+      copy.createdAt = new Date().toISOString();
+      window.etudesStore.saveEtude(copy).then(function () {
+        toast('Duplicated.');
+        refreshSavedEtudes();
+      });
+    });
+
     const del = document.createElement('button');
     del.className = 'btn btn-danger btn-sm';
     del.textContent = 'Delete';
@@ -629,6 +810,7 @@
 
     card.appendChild(info);
     card.appendChild(rename);
+    card.appendChild(dup);
     card.appendChild(del);
     card.appendChild(practice);
     return card;
