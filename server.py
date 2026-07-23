@@ -359,44 +359,58 @@ def swap_to_bass_clef(xml_string):
 
 # Verovio's rendering of <bar-style>:
 #   light-heavy  -> thin-thick double bar (the standard "||" final bar)
-#   light-light  -> double-thin bar (a stylistic "section end" cue,
-#                   visible in the source as a system-break separator
-#                   in some Bob Mover exercises, e.g. #169)
+#   light-light  -> double-thin bar (looks like "||" to the user —
+#                   even though the source marks it as a stylistic
+#                   section-end cue, any "||" symbol on a score reads
+#                   as "end of exercise", so this style also reads as
+#                   a final-bar cue. Don't preserve it mid-score.)
 #   heavy-heavy  -> thick-thick final bar (rendered, but unusual)
 #   regular      -> single thin bar
 #
-# Three edge cases the normalization has to handle:
-#   A. The very last measure ends with no barline. Inject one in
-#      heavy-heavy style so the user can see the score is finished.
-#   B. The very last measure ends with a non-final style (light-light,
-#      regular, etc.). Promote only the *last* one to light-heavy so
-#      the standard "||" final bar appears at the end.
-#   C. Non-final right-position barlines (intermediate, mid-exercise
-#      system-break bars) should be LEFT ALONE in their source style.
-#      Earlier versions of this function rewrote every such bar to
-#      light-heavy which made two-system exercises show a phantom "||"
-#      mid-score; that was confusing.
+# User rule (verbatim): "any || bar lines means end of exercise".
+# Two-system Bob Mover exercises (#169 etc.) include a stylistic
+# <barline> between systems that Audiveris captures as light-light.
+# The source's intent is "music continues on the next system", but
+# Verovio renders light-light as a double-thin bar that visually reads
+# as "||". From the user's perspective, that is a wrong end-of-piece
+# marker.
 #
-# We work in reverse: first, the LAST right-position barline (if any)
-# gets light-heavy. Earlier right-position barlines are left as-is.
+# So the normalization is:
+#   A. The very last measure ends with no barline → inject one in
+#      heavy-heavy style so the user can see the score is finished.
+#   B. Right-position barlines that are NOT the LAST one → REMOVE
+#      entirely. They were visual section breaks in the source PDF
+#      and are not part of the exercise structure.
+#   C. The LAST right-position barline's bar-style → light-heavy
+#      (the standard "||" final bar). This includes the injected
+#      heavy-heavy from step A — we promote it to light-heavy so
+#      the user sees a thin-thick "||" at the very end of the score.
+#
+# Net effect: every served exercise has exactly ONE right-position
+# barline in its <part>, and it is light-heavy. No mid-score "||"
+# can survive the transform.
 _BAR_STYLE_FINALIZE_RE = re.compile(
     r'(<barline\b[^>]*\blocation="right"[^>]*>\s*'
-    r'<bar-style>\s*)(?:light-light|regular|final-heavy|heavy)(\s*</bar-style>)',
+    r'<bar-style>\s*)(?:light-light|light-heavy|regular|final-heavy|heavy|heavy-heavy)(\s*</bar-style>)',
+    re.DOTALL,
+)
+_RIGHT_BARLINE_RE = re.compile(
+    r'<barline\b[^>]*location="right"[^>]*>.*?</barline>\s*',
     re.DOTALL,
 )
 
 def normalize_final_barlines(xml_string):
-    """Make sure every served exercise ends with a visible thick-thin
-    double bar (||) at the very end of the score. Intermediate
-    right-position barlines are preserved as the source styles them
-    (so multi-system exercises don't get a phantom end marker).
+    """Make sure every served exercise ends with exactly one visible
+    thick-thin double bar (||) at the very end of the score, and
+    that no other right-position barline appears anywhere.
 
-    Two operations, in order:
-      1. Inject heavy-heavy barline at the end of the last measure
-         if no right-position barline exists there.
-      2. Promote the last right-position barline's bar-style to
-         light-heavy (if it isn't already). Earlier right-side
-         barlines are not touched.
+    Three operations, in order:
+      1. Strip every existing right-position <barline>...</barline>
+         from the XML. (Source-derived and structural.)
+      2. Inject a single right-position barline at the end of the
+         last measure (just before </measure>) in heavy-heavy style.
+      3. Promote that injected barline to light-heavy so Verovio
+         draws the standard thin-thick "||".
     """
     import re
     if not xml_string:
@@ -404,29 +418,25 @@ def normalize_final_barlines(xml_string):
 
     out = xml_string
 
-    # Step 1: inject a heavy-heavy barline before the final </measure>
-    #         if no right-position one exists.
+    # Step 1: strip every right-position barline. They appear in the
+    # source for two reasons: a stylistic section-end cue in the
+    # middle of a multi-system exercise (Audiveris captured as
+    # light-light), or the final bar at the end. Both must go away —
+    # we'll add a clean one back in step 2.
+    out = _RIGHT_BARLINE_RE.sub('', out)
+
+    # Step 2: inject a heavy-heavy barline just before the final
+    # </measure>.
     last_m = list(re.finditer(r'<measure\b[^>]*>(?:.|\n)*?</measure>', out, re.DOTALL))
     if last_m:
         last = last_m[-1]
-        body = last.group(0)
-        has_right = ('<barline' in body) and bool(re.search(r'location="right"', body))
-        if not has_right:
-            barline = '<barline location="right"><bar-style>heavy-heavy</bar-style></barline>'
-            m_end = last.end() - len('</measure>')
-            out = out[:m_end] + barline + '</measure>' + out[m_end:]
+        barline = '<barline location="right"><bar-style>heavy-heavy</bar-style></barline>'
+        m_end = last.end() - len('</measure>')
+        out = out[:m_end] + barline + '</measure>' + out[m_end:]
 
-    # Step 2: find the LAST right-position barline and promote its style.
-    #         Only the LAST one. Earlier ones stay as the source marked them.
-    rb_iter = list(re.finditer(
-        r'<barline\b[^>]*location="right"[^>]*>\s*<bar-style>[^<]*</bar-style>\s*</barline>',
-        out, re.DOTALL,
-    ))
-    if rb_iter:
-        last_rb = rb_iter[-1]
-        new = _BAR_STYLE_FINALIZE_RE.sub(r'\1light-heavy\2', last_rb.group(0))
-        if new != last_rb.group(0):
-            out = out[:last_rb.start()] + new + out[last_rb.end():]
+    # Step 3: promote the (now singular) right-position barline to
+    # light-heavy so the rendered "||" is the canonical thin-thick.
+    out = _BAR_STYLE_FINALIZE_RE.sub(r'\1light-heavy\2', out, count=1)
 
     return out
 
