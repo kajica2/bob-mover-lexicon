@@ -1467,6 +1467,13 @@
       // with the standalone metronome is unchanged: turning this on
       // stops the standalone, and starting the standalone clears this
       // checkbox.
+      // v30: synchronise the engine with the checkbox's initial state
+      // (the HTML has `checked` so the engine's metronomeOn flag
+      // should also start true — otherwise play() would skip the
+      // metronome scheduling even though the box is checked). One-time
+      // sync at init, then `change` keeps them in lock-step from there.
+      const eng0 = window.playbackEngine;
+      if (eng0) eng0.setMetronome(!!metroBtn.checked);
       metroBtn.addEventListener('change', () => {
         const on = !!metroBtn.checked;
         const eng = window.playbackEngine;
