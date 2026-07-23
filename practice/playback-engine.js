@@ -71,10 +71,12 @@
       try {
         // Build the synth. connect to destination.
         synth = new T.MonoSynth(SYNTH_OPTS).toDestination();
-        // Triangle-wave master. -8 dBFS gives a healthy room-level signal
-        // without hard-clipping on busy runs; the engine output is filtered
-        // through the synth's lowpass + filter env anyway.
-        synth.volume.value = -8;
+        // Triangle-wave master. 0 dBFS (unity gain) so the signal is
+        // unambiguously audible on built-in Mac speakers and quiet
+        // headphones. The synth's own envelope (attack 0.01 / decay
+        // 0.08) prevents hard-clipping on dense runs; if your system
+        // audio is set reasonably, this is a clear room-level signal.
+        synth.volume.value = 0;
 
         // Metronome: two cheap membrane voices.
         metroDown = new T.MembraneSynth({
@@ -284,6 +286,35 @@
     return '64n';
   }
 
+  // Diagnostic test sound: fires a single 0.5s A4 (~440Hz) tone on the
+  // master synth. Use this to verify audio output works at all, independent
+  // of the schedule/transport logic. Returns true if the trigger was
+  // scheduled (false if synth isn't built yet — call init() first).
+  function testSound() {
+    if (!synth) {
+      if (!init()) return false;
+    }
+    const T = tone;
+    if (!T) return false;
+    // Tone.start() returns a Promise; we fire it but don't block the
+    // trigger. If the AudioContext is in 'suspended' state, the trigger
+    // is queued and fires when the next user gesture unlocks it.
+    try {
+      if (T.getContext().state === 'suspended') {
+        const p = T.start();
+        if (p && typeof p.catch === 'function') p.catch(function(){});
+      }
+    } catch (e) {}
+    try {
+      // 0.5s triangle A4 at 0dBFS. The attack envelope adds a 10ms ramp
+      // so there should be no audible click.
+      synth.triggerAttackRelease('8n', T.now(), 'A4');
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // Expose the public API.
   root.playbackEngine = {
     init: init,
@@ -293,6 +324,8 @@
     setTempo: setTempo,
     setMetronome: setMetronome,
     dispose: dispose,
+    // Diagnostic
+    testSound: testSound,
     // diagnostic surface
     _isMono: true,
     _engine: 'tone.js',
