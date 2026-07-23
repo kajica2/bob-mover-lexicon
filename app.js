@@ -84,12 +84,19 @@
     }
     document.getElementById('empty-state').style.display = 'none';
     grid.innerHTML = filtered.map((e) => exerciseCardHtml(e)).join('');
-    // Attach click handlers
+    // Attach click handlers.
+    // The whole card navigates to the practice page when clicked. The
+    // star button is its own toggle target — stop propagation so
+    // clicking the star doesn't also fire the card navigation.
     grid.querySelectorAll('.ex-card').forEach((el) => {
       const id = parseInt(el.dataset.id, 10);
-      el.querySelector('.ex-img').addEventListener('click', () => toggleSelect(id));
-      // The star button is its own toggle target. Stop propagation so
-      // clicking the star doesn't also fire the image click above.
+      el.addEventListener('click', (e) => {
+        // Don't navigate if the user clicked the star button (it has
+        // its own handler that stops propagation, but defensively skip
+        // anything inside the star too).
+        if (e.target.closest('.select-star')) return;
+        window.location.href = `./practice/?id=${id}`;
+      });
       const star = el.querySelector('.select-star');
       if (star) {
         star.addEventListener('click', function (e) {
