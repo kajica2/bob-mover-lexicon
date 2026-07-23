@@ -286,29 +286,40 @@
     return '64n';
   }
 
-  // Diagnostic test sound: fires a single 0.5s A4 (~440Hz) tone on the
-  // master synth. Use this to verify audio output works at all, independent
-  // of the schedule/transport logic. Returns true if the trigger was
-  // scheduled (false if synth isn't built yet — call init() first).
+  // Diagnostic test sound. Fires an unmistakable 2-second descending
+  // arpeggio (C5 → A4 → F4 → C4) on the master synth — long enough and
+  // loud enough to definitively confirm whether audio output works at
+  // all, independent of the schedule/transport logic. Each note is a
+  // 0.5s triangle wave at 0 dBFS, the synth's ADSR adds a 10ms attack
+  // to avoid clicks.
+  //
+  // Returns true if the triggers were scheduled, false if the synth
+  // couldn't be built (call init() first).
   function testSound() {
     if (!synth) {
       if (!init()) return false;
     }
     const T = tone;
     if (!T) return false;
-    // Tone.start() returns a Promise; we fire it but don't block the
-    // trigger. If the AudioContext is in 'suspended' state, the trigger
-    // is queued and fires when the next user gesture unlocks it.
+    // Tone.start() returns a Promise. Fire-and-forget; if the context
+    // is in 'suspended' state the trigger is queued and fires when
+    // the user gesture unlocks audio.
     try {
       if (T.getContext().state === 'suspended') {
         const p = T.start();
         if (p && typeof p.catch === 'function') p.catch(function(){});
       }
     } catch (e) {}
+    // 4-note descending arpeggio, 0.5s apart. C5 (midi 72) is ~523Hz,
+    // mid-range and unambiguous. A4 (69) 440Hz, F4 (65) 349Hz, C4 (60)
+    // 262Hz — covers most speakers' frequency response.
+    const notes = [72, 69, 65, 60];
+    const t0 = T.now() + 0.05;
     try {
-      // 0.5s triangle A4 at 0dBFS. The attack envelope adds a 10ms ramp
-      // so there should be no audible click.
-      synth.triggerAttackRelease('8n', T.now(), 'A4');
+      for (let i = 0; i < notes.length; i++) {
+        const hz = T.Frequency(notes[i], 'midi').toFrequency();
+        synth.triggerAttackRelease('4n', t0 + i * 0.5, hz);
+      }
       return true;
     } catch (e) {
       return false;
