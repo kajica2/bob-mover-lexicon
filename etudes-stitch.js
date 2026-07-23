@@ -91,6 +91,14 @@
     if (!r.ok) throw new Error('Failed to fetch ex ' + exerciseId + ': HTTP ' + r.status);
     let xml = await r.text();
     if (semitones) xml = transposePitch(xml, semitones);
+    // v31: strip <harmony> elements (chord symbols). The server injects
+    // them on the served MusicXML for the practice page (so the player
+    // sees the chord progression while practicing), but the etude
+    // generator doesn't want them — an etude stitches many sources and
+    // the chord labels from one source would be misleading on the next
+    // (different key, different progression). Drop all of them here.
+    xml = xml.replace(/<harmony>[\s\S]*?<\/harmony>/g, '');
+    xml = xml.replace(/<harmony\b[^>]*\/>/g, '');  // self-closing variant
     return xml;
   }
 
