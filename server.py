@@ -54,6 +54,38 @@ def extract_musicxml_from_mxl(mxl_path):
     return None
 
 
+def _simplify_enharmonics(score):
+    """Normalize enharmonic spellings across every note in `score`.
+
+    music21's `pitch.simplifyEnharmonic(inPlace=True)` rewrites a pitch
+    to the spelling that best fits the *current* key context. Without
+    it, transposing a piece that uses C# into a key where Db is the
+    natural flat (e.g. a flat-side key) leaves the note spelled C# —
+    which is technically the same pitch but reads wrong on the page
+    and confuses the user.
+
+    Called by both transpose_musicxml and cycle_musicxml after the
+    transposition (and, for cycle_musicxml, after the new key
+    signature has been inserted so simplifyEnharmonic has the right
+    context to pick the spelling).
+
+    Handles both pitched notes and chords (n.pitches is plural on
+    Chord objects). Rests are skipped (n.pitch is None for Rest).
+    """
+    for n in score.recurse().notes:
+        if n.isChord:
+            for p in n.pitches:
+                try:
+                    p.simplifyEnharmonic(inPlace=True)
+                except Exception:
+                    pass
+        elif n.pitch is not None:
+            try:
+                n.pitch.simplifyEnharmonic(inPlace=True)
+            except Exception:
+                pass
+
+
 def transpose_musicxml(mxl_path, semitones):
     """Transpose a MusicXML file by N semitones using music21.
 
@@ -71,6 +103,14 @@ def transpose_musicxml(mxl_path, semitones):
         score = converter.parse(original_xml, format='musicxml')
         if semitones != 0:
             score = score.transpose(semitones)
+            # v25: rewrite enharmonic spellings to match the new tonal
+            # centre. Without this, a piece originally in C# (e.g. C#7
+            # written as C#7) transposed down a semitone becomes C7,
+            # which music21 will leave as C natural — but the key
+            # context is now 7 flats and Bbb would be the "natural"
+            # spelling. simplifyEnharmonic picks the spelling that
+            # best fits the *current* key, which for 7 flats is Cb.
+            _simplify_enharmonics(score)
         # Serialize back to MusicXML. score.write returns a Path; read it back as string
         import tempfile
         with tempfile.NamedTemporaryFile(suffix='.musicxml', delete=False, mode='w') as tmp:
@@ -181,6 +221,19 @@ def cycle_musicxml(mxl_path, mode, bars):
                 ks = m21key.KeySignature(fifths)
                 # Insert at position 0 of the measure (before any notes)
                 first_m.insert(0, ks)
+            # v25: rewrite enharmonic spellings to fit the new key.
+            # Run AFTER the key signature is inserted so
+            # simplifyEnharmonic has the right context — e.g. after
+            # transpose(+11) the key is 7 flats, so a note that
+            # music21 left as B natural becomes Cb, a Bbb stays Bbb,
+            # and a F natural becomes E# (because E# is the leading
+            # tone in C-flat major and that's the "natural" spelling
+            # in that key). For 5ths mode this is what makes the
+            # cycled score read as a circle of fifths instead of
+            # looking like a piece with random sharps stuck in front
+            # of otherwise-flat notes.
+            if shift != 0:
+                _simplify_enharmonics(cloned)
             # Insert each measure into the output part
             for m in cloned.getElementsByClass('Measure'):
                 out_part.append(m)
