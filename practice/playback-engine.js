@@ -250,8 +250,21 @@
     // to bypass MonoSynth's ADSR/filter shape that rendered ex 1+
     // inaudible on built-in Mac speakers.
     var rawCtx = T.getContext().rawContext;
+    // v23: enforce monophony. The original Tone.MonoSynth did this
+    // automatically via note-stealing; v20's raw-oscillator rewrite
+    // removed that safety, so when two notes share a beat (chord tones,
+    // overlapping exercises in a stitched etude, accidental
+    // fractional rounding) every one of them plays simultaneously —
+    // producing stacked-tone "harmonies" that aren't in the score's
+    // intent. We track which beat positions we've already scheduled
+    // and skip duplicates. Tolerance of 0.01 beats handles
+    // floating-point drift in triplet arithmetic.
+    const scheduledBeats = new Set();
     for (let i = 0; i < notes.length; i++) {
       const note = notes[i];
+      const beatKey = note.beat.toFixed(4);
+      if (scheduledBeats.has(beatKey)) continue;  // monophony: skip duplicate
+      scheduledBeats.add(beatKey);
       // Capture callbacks in locals for closure stability (cancelled by
       // Stop which nulls the module-level refs).
       const onNote = onNoteCb;

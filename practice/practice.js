@@ -68,7 +68,14 @@
       noteElems.forEach((note) => {
         if (note.querySelector('rest')) return;
         if (note.querySelector('chord')) {
-          posInMeasure -= getNoteDuration(note, divisions);
+          // v23: skip <chord/> notes. The engine is monophonic (sax
+          // practice tool) — playing every chord tone simultaneously
+          // produces ugly stacked-tone "harmonies" that aren't in the
+          // exercise's intent. The first note of each chord plays;
+          // subsequent chord tones are dropped. Verovio still renders
+          // the full chord on the score, so what you see and what you
+          // hear line up (one note = the lead of each chord stack).
+          return;
         }
         const step = note.querySelector('pitch > step')?.textContent || 'C';
         const octave = parseInt(note.querySelector('pitch > octave')?.textContent || '4');
