@@ -303,15 +303,15 @@
     return '64n';
   }
 
-  // Diagnostic test sound. Fires an unmistakable 2-second descending
-  // arpeggio (C5 → A4 → F4 → C4) on the master synth — long enough and
-  // loud enough to definitively confirm whether audio output works at
-  // all, independent of the schedule/transport logic. Each note is a
-  // 0.5s triangle wave at 0 dBFS, the synth's ADSR adds a 10ms attack
-  // to avoid clicks.
+  // Diagnostic: continuous test tone. Holds a 400Hz triangle wave at
+  // 0 dBFS for 4 seconds with a 50ms ramp on each end to avoid clicks.
+  // This is the "no excuses it didn't fire" check — the longest, loudest,
+  // lowest-pitch signal we can produce through Tone.MonoSynth. If you
+  // don't hear THIS, the problem is macOS audio output (system volume,
+  // output device, Bluetooth disconnect), not the synth path.
   //
-  // Returns true if the triggers were scheduled, false if the synth
-  // couldn't be built (call init() first).
+  // Returns true if the trigger was scheduled, false if synth isn't
+  // built (call init() first).
   function testSound() {
     if (!synth) {
       if (!init()) return false;
@@ -327,16 +327,14 @@
         if (p && typeof p.catch === 'function') p.catch(function(){});
       }
     } catch (e) {}
-    // 4-note descending arpeggio, 0.5s apart. C5 (midi 72) is ~523Hz,
-    // mid-range and unambiguous. A4 (69) 440Hz, F4 (65) 349Hz, C4 (60)
-    // 262Hz — covers most speakers' frequency response.
-    const notes = [72, 69, 65, 60];
+    // Hold a single 4-second triangle 400Hz at 0dBFS. 400Hz is the
+    // base of the audible-range voice band and most speakers can
+    // produce it at full volume without distorting. The synth's
+    // envelope (attack 0.01, decay 0.08, sustain 0.55) keeps it
+    // sustained for the full duration; release fires on stop().
     const t0 = T.now() + 0.05;
     try {
-      for (let i = 0; i < notes.length; i++) {
-        const hz = T.Frequency(notes[i], 'midi').toFrequency();
-        synth.triggerAttackRelease('4n', t0 + i * 0.5, hz);
-      }
+      synth.triggerAttackRelease(4, t0, 400);
       return true;
     } catch (e) {
       return false;
