@@ -66,7 +66,17 @@
       let posInMeasure = 0;
 
       noteElems.forEach((note) => {
-        if (note.querySelector('rest')) return;
+        if (note.querySelector('rest')) {
+          // v24: advance posInMeasure by the rest's duration so the
+          // next pitched note in the same measure lands at the right
+          // beat. The previous code returned early, which worked only
+          // when the rest happened to be the last element of the last
+          // measure (all 407 source exercises happen to put their
+          // rests there). A rest mid-measure would have caused the
+          // next note to fire early.
+          posInMeasure += getNoteDuration(note, divisions);
+          return;
+        }
         if (note.querySelector('chord')) {
           // v23: skip <chord/> notes. The engine is monophonic (sax
           // practice tool) — playing every chord tone simultaneously
@@ -82,6 +92,24 @@
         const alter = parseInt(note.querySelector('pitch > alter')?.textContent || '0');
         const duration = getNoteDuration(note, divisions);
         const midi = stepToMidi(step, octave, alter);
+        // v24: tie handling. If this note is the STOP end of a tie
+        // (i.e. it should sustain from the previous same-pitch note),
+        // merge the duration into the previous entry. Ties in MusicXML
+        // are encoded as <tie type="start"/> on the first note and
+        // <tie type="stop"/> on the second; the two become one
+        // sustained note. The previous code treated them as two
+        // separate notes back-to-back, which sounded OK for a same-
+        // pitch pair but broke the timing of any further tied chains
+        // and produced double visual highlights.
+        const tieStop = note.querySelector('tie[type="stop"]');
+        if (tieStop && notes.length > 0) {
+          const prev = notes[notes.length - 1];
+          if (prev.midi === midi) {
+            prev.duration += duration;
+            posInMeasure += duration;
+            return;  // skip emitting this note — its time is part of prev
+          }
+        }
         notes.push({
           midi,
           beat: measureStart + posInMeasure,
