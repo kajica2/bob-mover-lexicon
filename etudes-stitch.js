@@ -183,6 +183,14 @@
       for (let j = 0; j < measures.length; j++) {
         measures[j] = measures[j].replace(/<barline\b[^>]*>[\s\S]*?<\/barline>/g, '');
       }
+      // v29: time signatures are preserved as-is. The Bob Mover Lexicon
+      // doesn't emit <time> elements (it's "free-rhythm"), but if a
+      // future source has one, it passes through unchanged. We never
+      // synthesise, rewrite, or normalise time signatures here — that
+      // would silently change the feel of the source. If the user
+      // wants a uniform time signature across an etude whose sources
+      // disagree, that should be a deliberate step (e.g. a separate
+      // "normalise" action), not a side effect of stitching.
       if (i > 0) allMeasures.push(withSystemBreak(measures[0]));
       else allMeasures.push(measures[0]);
       for (let j = 1; j < measures.length; j++) {
