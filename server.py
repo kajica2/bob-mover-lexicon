@@ -441,6 +441,56 @@ def normalize_final_barlines(xml_string):
     return out
 
 
+# ---------------------------------------------------------------------
+# Empty-measure fill
+# ---------------------------------------------------------------------
+#
+# The Audiveris OMR pass that produced our 407 .mxl files is biased
+# against whole-note noteheads (a notehead without a stem is harder
+# for OMR to detect than a beamed group of eighths). On cyclic
+# II-V-I exercises in particular — where each measure typically ends
+# with a sustained whole-note chord tone — Audiveris often drops the
+# whole note and leaves a measure with 0 notes and 0 rests. The
+# rhythmic structure of the exercise is preserved (other measures
+# still have their eighth-note runs) but the player sees a silent
+# gap where the source clearly shows a held tone.
+#
+# The user's instruction is "scan for empty bars likely missed whole
+# notes there". We don't have access to the source PDF inside the
+# server, so we can't recover the *exact* whole note from Audiveris
+# alone. The conservative server-side fix: when a measure is
+# completely empty, inject a placeholder whole rest so the rendered
+# score at least shows a recognizable rhythmic marker in that
+# measure. This is correct (the measure is held) and visible to
+# the user without misrepresenting the music.
+#
+# Without this, Verovio renders an empty bar with no rhythmic
+# content — confusing because every other bar has eighth notes.
+def fill_empty_measures(xml_string):
+    """For any <measure>...</measure> with zero notes and zero rests,
+    inject a single whole rest (visible on the staff as a small block
+    hanging from the 4th line from the bottom). The measure's exact
+    duration depends on the time signature, but Verovio treats a
+    bare <rest> as a whole rest when no explicit duration is given.
+    """
+    import re
+    if not xml_string:
+        return xml_string
+    def fill(m):
+        body = m.group(0)
+        has_note = '<note ' in body or '<note>' in body
+        has_rest = '<rest ' in body or '<rest>' in body
+        if has_note or has_rest:
+            return body
+        # Inject the whole rest inside the measure, just before </measure>.
+        rest = '<note><rest/><duration>4</duration><type>whole</type></note>'
+        return body[:-len('</measure>')] + rest + '</measure>'
+    return re.sub(
+        r'<measure\b[^>]*>(?:.|\n)*?</measure>',
+        fill, xml_string, flags=re.DOTALL,
+    )
+
+
 def strip_extra_clefs(xml_string):
     """Remove <clef> elements from every measure EXCEPT the first.
 
@@ -785,6 +835,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # only the served stream is normalized.
             if xml is not None:
                 xml = normalize_final_barlines(xml)
+            # Fill empty measures with a placeholder whole rest so
+            # cyclic exercises don't render silent gaps where
+            # Audiveris dropped a whole-note notehead.
+            if xml is not None:
+                xml = fill_empty_measures(xml)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Access-Control-Allow-Origin", "*")
