@@ -113,7 +113,10 @@
                 <input id="playback-tempo" type="range" min="40" max="240" value="100" class="tempo-slider">
                 <span id="playback-tempo-label" class="tempo-display">100%</span>
               </label>
-              <button id="btn-playback-metronome" class="btn btn-ghost btn-sm" title="Toggle metronome click" aria-pressed="false">🥁 Metronome</button>
+              <label class="checkbox metronome-toggle" title="Toggle the in-exercise metronome click">
+                <input id="chk-playback-metronome" type="checkbox">
+                <span>🥁 Metronome</span>
+              </label>
               <label class="metro-inline-label">Time
                 <select id="metro-timesig" class="input input-sm" title="Time signature for the metronome">
                   <option value="4/4">4/4</option>
@@ -270,13 +273,13 @@
     </div>
   </main>
 
-  <script src="vendor/verovio-toolkit.js?v=24"></script>
-  <script src="vendor/Tone.js?v=24"></script>
-  <script src="../range-modal.js?v=24"></script>
-  <script src="takes-store.js?v=24"></script>
-  <script src="../etudes-store.js?v=24"></script>
-  <script src="playback-engine.js?v=24"></script>
-  <script src="practice.js?v=24"></script>
+  <script src="vendor/verovio-toolkit.js?v=26"></script>
+  <script src="vendor/Tone.js?v=26"></script>
+  <script src="../range-modal.js?v=26"></script>
+  <script src="takes-store.js?v=26"></script>
+  <script src="../etudes-store.js?v=26"></script>
+  <script src="playback-engine.js?v=26"></script>
+  <script src="practice.js?v=26"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
     <div class="fullpage-toolbar">

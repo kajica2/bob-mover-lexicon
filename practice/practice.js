@@ -1252,7 +1252,7 @@
     const stopBtn  = document.getElementById('btn-playback-stop');
     const tempo    = document.getElementById('playback-tempo');
     const tempoLbl = document.getElementById('playback-tempo-label');
-    const metroBtn = document.getElementById('btn-playback-metronome');
+    const metroBtn = document.getElementById('chk-playback-metronome');
     const statusEl = document.getElementById('playback-status');
     const beatIndicator = document.getElementById('beat-indicator');
     const metroTimeSigSel = document.getElementById('metro-timesig');
@@ -1412,21 +1412,21 @@
     }
 
     if (metroBtn) {
-      metroBtn.addEventListener('click', () => {
-        const on = !metroBtn.classList.contains('active');
-        metroBtn.classList.toggle('active', on);
-        metroBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      // v26: metronome is now a checkbox, not a button. State lives on
+      // input.checked; we use the change event (fires on user toggle)
+      // and the same `setMetronome` engine call. The mutual-exclusion
+      // with the standalone metronome is unchanged: turning this on
+      // stops the standalone, and starting the standalone clears this
+      // checkbox.
+      metroBtn.addEventListener('change', () => {
+        const on = !!metroBtn.checked;
         const eng = window.playbackEngine;
         if (eng) eng.setMetronome(on);
-        // Mutually exclusive with the standalone metronome: turning on
-        // the in-exercise metronome stops the standalone one, and vice
-        // versa, so the user doesn't get two click tracks layered.
         if (on && eng && typeof eng.stopMetronome === 'function' && eng.isMetronomeRunning && eng.isMetronomeRunning()) {
           eng.stopMetronome();
           updateStandaloneUi(false);
         }
       });
-      metroBtn.setAttribute('aria-pressed', 'false');
     }
 
     // ---- Standalone metronome (free-running) ----
@@ -1499,9 +1499,8 @@
       // Stop exercise playback and the in-exercise metronome so we
       // don't double up.
       try { eng.stop(); } catch (e) {}
-      if (metroBtn && metroBtn.classList.contains('active')) {
-        metroBtn.classList.remove('active');
-        metroBtn.setAttribute('aria-pressed', 'false');
+      if (metroBtn && metroBtn.checked) {
+        metroBtn.checked = false;
         try { eng.setMetronome(false); } catch (e) {}
       }
       const cfg = readStandaloneConfig();
