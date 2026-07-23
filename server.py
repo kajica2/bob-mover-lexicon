@@ -359,66 +359,75 @@ def swap_to_bass_clef(xml_string):
 
 # Verovio's rendering of <bar-style>:
 #   light-heavy  -> thin-thick double bar (the standard "||" final bar)
-#   light-light  -> double-thin bar (double-bar with no thick side)
+#   light-light  -> double-thin bar (a stylistic "section end" cue,
+#                   visible in the source as a system-break separator
+#                   in some Bob Mover exercises, e.g. #169)
 #   heavy-heavy  -> thick-thick final bar (rendered, but unusual)
 #   regular      -> single thin bar
 #
-# The upstream Bob Mover .mxl files have three different final-bar
-# conventions mixed across the 407 exercises:
-#   - 375 exercises use light-light (double-thin)
-#   - 5 exercises use light-heavy (the standard final bar)
-#   - 1 exercise uses regular
-#   - 37 exercises have NO <barline> at all on the last measure
+# Three edge cases the normalization has to handle:
+#   A. The very last measure ends with no barline. Inject one in
+#      heavy-heavy style so the user can see the score is finished.
+#   B. The very last measure ends with a non-final style (light-light,
+#      regular, etc.). Promote only the *last* one to light-heavy so
+#      the standard "||" final bar appears at the end.
+#   C. Non-final right-position barlines (intermediate, mid-exercise
+#      system-break bars) should be LEFT ALONE in their source style.
+#      Earlier versions of this function rewrote every such bar to
+#      light-heavy which made two-system exercises show a phantom "||"
+#      mid-score; that was confusing.
 #
-# Practicing from a score where the end isn't marked with a clear "||"
-# obscures where one exercise ends and the next would begin. We
-# normalize the served XML so every exercise's final measure ends
-# with a visible thick-thin bar (||), the way most published music
-# shows end-of-piece.
-#
-# The transform is lossless at the markup level: a light-light final
-# bar in the source remains a stylistic "section end" (it just renders
-# as || instead of ||). The committed .mxl files are unchanged;
-# only the served stream is normalized.
-_BAR_STYLE_NORMALIZE_RE = re.compile(
+# We work in reverse: first, the LAST right-position barline (if any)
+# gets light-heavy. Earlier right-position barlines are left as-is.
+_BAR_STYLE_FINALIZE_RE = re.compile(
     r'(<barline\b[^>]*\blocation="right"[^>]*>\s*'
     r'<bar-style>\s*)(?:light-light|regular|final-heavy|heavy)(\s*</bar-style>)',
     re.DOTALL,
 )
 
 def normalize_final_barlines(xml_string):
-    """Rewrite every right-position <barline><bar-style> to light-heavy
-    so Verovio renders a visible thick-thin final bar (||). Also
-    inject a final barline into exercises whose last measure has none.
+    """Make sure every served exercise ends with a visible thick-thin
+    double bar (||) at the very end of the score. Intermediate
+    right-position barlines are preserved as the source styles them
+    (so multi-system exercises don't get a phantom end marker).
 
-    Safe to run on already-normalized XML: an idempotent regex.
+    Two operations, in order:
+      1. Inject heavy-heavy barline at the end of the last measure
+         if no right-position barline exists there.
+      2. Promote the last right-position barline's bar-style to
+         light-heavy (if it isn't already). Earlier right-side
+         barlines are not touched.
     """
     import re
     if not xml_string:
         return xml_string
 
-    # 1. Replace non-light-heavy right-side bar styles with light-heavy.
-    out = _BAR_STYLE_NORMALIZE_RE.sub(r'\1light-heavy\2', xml_string)
+    out = xml_string
 
-    # 2. If the last measure has no right-side barline at all, inject one
-    #    at the end (just before </measure> on the last measure).
-    #    Check the *last* <measure ...>...</measure> block:
-    def add_final_barline(xml):
-        last_m = list(re.finditer(r'<measure\b[^>]*>(?:.|\n)*?</measure>', xml, re.DOTALL))
-        if not last_m:
-            return xml
+    # Step 1: inject a heavy-heavy barline before the final </measure>
+    #         if no right-position one exists.
+    last_m = list(re.finditer(r'<measure\b[^>]*>(?:.|\n)*?</measure>', out, re.DOTALL))
+    if last_m:
         last = last_m[-1]
-        if '<barline' in last.group(0) and re.search(r'location="right"', last.group(0)):
-            # already has a right-side barline
-            return xml
-        # Insert a final barline just before the closing </measure>
-        m_start, m_end = last.span()
-        # m_end points right after </measure>; we want to replace </measure>
-        # with our barline followed by </measure>
-        barline = '<barline location="right"><bar-style>heavy-heavy</bar-style></barline>'
-        return xml[:m_end - len('</measure>')] + barline + '</measure>' + xml[m_end:]
+        body = last.group(0)
+        has_right = ('<barline' in body) and bool(re.search(r'location="right"', body))
+        if not has_right:
+            barline = '<barline location="right"><bar-style>heavy-heavy</bar-style></barline>'
+            m_end = last.end() - len('</measure>')
+            out = out[:m_end] + barline + '</measure>' + out[m_end:]
 
-    out = add_final_barline(out)
+    # Step 2: find the LAST right-position barline and promote its style.
+    #         Only the LAST one. Earlier ones stay as the source marked them.
+    rb_iter = list(re.finditer(
+        r'<barline\b[^>]*location="right"[^>]*>\s*<bar-style>[^<]*</bar-style>\s*</barline>',
+        out, re.DOTALL,
+    ))
+    if rb_iter:
+        last_rb = rb_iter[-1]
+        new = _BAR_STYLE_FINALIZE_RE.sub(r'\1light-heavy\2', last_rb.group(0))
+        if new != last_rb.group(0):
+            out = out[:last_rb.start()] + new + out[last_rb.end():]
+
     return out
 
 
