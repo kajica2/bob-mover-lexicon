@@ -64,34 +64,50 @@
   // but don't gate on its result: Transport and trigger calls work even
   // when the context is in 'suspended' state; the browser unblocks audio
   // on the next user gesture automatically.
+  let masterGain = null;     // explicit master Gain (we control volume)
   function init() {
     const T = ensureTone();
     if (!T) return false;
     if (!initialized) {
       try {
-        // Build the synth. connect to destination.
-        synth = new T.MonoSynth(SYNTH_OPTS).toDestination();
-        // Triangle-wave master. 0 dBFS (unity gain) so the signal is
-        // unambiguously audible on built-in Mac speakers and quiet
-        // headphones. The synth's own envelope (attack 0.01 / decay
-        // 0.08) prevents hard-clipping on dense runs; if your system
-        // audio is set reasonably, this is a clear room-level signal.
+        // Ensure Tone's destination/master is unmuted. Tone 15's
+        // Destination wraps an internal Master Gain that defaults
+        // to mute=false, but a previous init or browser quirk can
+        // flip it. Forcing mute=false guarantees the synth's signal
+        // actually reaches the speakers.
+        try {
+          const dest = T.getDestination();
+          if (dest && typeof dest.mute === 'boolean') dest.mute = false;
+          if (dest && typeof dest.volume !== 'undefined') dest.volume.value = 0;
+        } catch (e) {}
+
+        // Build an explicit master Gain that we control. We route the
+        // synth + metronome voices through it, and then to destination.
+        // This gives us a single point of volume control and avoids
+        // any subtle issues with Tone's Destination muting.
+        masterGain = new T.Gain(1.0).toDestination();
+
+        // Build the synth. connect through masterGain.
+        synth = new T.MonoSynth(SYNTH_OPTS);
         synth.volume.value = 0;
+        synth.connect(masterGain);
 
         // Metronome: two cheap membrane voices.
         metroDown = new T.MembraneSynth({
           pitchDecay: 0.01,
           octaves: 2,
           envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.05 }
-        }).toDestination();
+        });
         metroDown.volume.value = METRO_DOWN_VOL;
+        metroDown.connect(masterGain);
 
         metroUp = new T.MembraneSynth({
           pitchDecay: 0.01,
           octaves: 2,
           envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.05 }
-        }).toDestination();
+        });
         metroUp.volume.value = METRO_BEAT_VOL;
+        metroUp.connect(masterGain);
 
         initialized = true;
       } catch (e) {
@@ -256,7 +272,8 @@
     try { synth && synth.dispose(); } catch (e) {}
     try { metroDown && metroDown.dispose(); } catch (e) {}
     try { metroUp && metroUp.dispose(); } catch (e) {}
-    synth = metroDown = metroUp = null;
+    try { masterGain && masterGain.dispose(); } catch (e) {}
+    synth = metroDown = metroUp = masterGain = null;
     initialized = false;
   }
 
