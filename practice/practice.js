@@ -343,6 +343,7 @@
   }
   function highlightNote(/* note, on */) {}
   function indexScoreNotePositions() {}
+  function applyFavoriteState(/* btn, isFav */) {}
 
   function zoomIn() {
     state.zoomScale = Math.min(120, state.zoomScale + 10);
@@ -1232,18 +1233,31 @@
       }
     }
 
-    playBtn.addEventListener('click', () => {
+    playBtn.addEventListener('click', async () => {
       if (!state.currentScore || !state.currentScore.notes || !state.currentScore.notes.length) {
         setStatus('no notes', 'error');
         return;
       }
       const eng = window.playbackEngine;
       if (!eng) { setStatus('engine missing', 'error'); return; }
-      // init() lazily creates the AudioContext on first user gesture.
+      // Tone.js requires the AudioContext to be running before any audio
+      // can be heard. On Safari + iOS, the context stays 'suspended'
+      // until a user gesture AND until our start() call resolves. We
+      // make play() async: kick Tone.start() and wait for the promise
+      // to resolve. The current click is the gesture, so this should
+      // complete within a single turn. On browsers that auto-resume
+      // (e.g. desktop Chrome), the promise resolves immediately.
+      const ToneNs = (typeof window !== 'undefined' && window.Tone) || null;
+      if (ToneNs && typeof ToneNs.context !== 'undefined' && ToneNs.context.state === 'suspended') {
+        try {
+          await ToneNs.start();
+        } catch (e) {
+          // fall through; play() will be a no-op if context still suspended
+        }
+      }
+      // init() lazily creates the AudioContext + synth. Safe to call
+      // repeatedly; no-op once initialized.
       eng.init();
-      // Some browsers (iOS Safari) leave the context in 'suspended' until
-      // an explicit resume(); calling it here is harmless.
-      try { if (eng.ctx && eng.ctx.state === 'suspended') eng.ctx.resume(); } catch (e) {}
       eng.setNotes(state.currentScore.notes, (state.currentScore.bpm || 120));
       eng.setTempo(effectiveBpm());
       const started = eng.play({
