@@ -391,9 +391,15 @@
       picked.map(function (p) { return { id: p.id, semitones: p.semitones || 0 }; }),
       namePreset
     ).then(function (xml) {
-      renderSvgForXml(previewWrap, xml);
-      state.composer.lastXml = xml;
+      // Clamp the stitched score to the user's saved instrument range.
+      var r = getEtudesRange();
+      var clamped = window.etudesStitch.clampToRange(xml, r.lowMidi, r.highMidi);
+      renderSvgForXml(previewWrap, clamped.xml);
+      state.composer.lastXml = clamped.xml;
       state.composer.lastName = namePreset;
+      if (clamped.moved > 0) {
+        toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
+      }
     }).catch(function (e) {
       previewWrap.innerHTML = '<p class="muted">Stitch failed: ' +
         (e && e.message ? e.message : e) + '</p>';
@@ -512,16 +518,47 @@
     if (!keySel.value) keySel.value = 'F';
   }
 
-  function getPatternRange() {
-    // Pull from the user's saved instrument range, or fall back to a
-    // sensible alto-sax default (Ab2-E5).
-    var r = null;
-    if (typeof window.getEffectiveRange === 'function') {
-      var cur = document.getElementById('instrument') ? document.getElementById('instrument').value : null;
-      if (cur) r = window.getEffectiveRange(cur);
+  // Pull the user's union-of-all-instruments range from localStorage.
+  // If the user has set a per-instrument range on any instrument, we
+  // take the minimum lowMidi and maximum highMidi across all stored
+  // instruments — this way the etudes page respects whatever the user
+  // has configured without asking them to pick an instrument here.
+  // Fall back to a sensible alto-sax default if nothing is stored.
+  function getEtudesRange() {
+    var all = null;
+    try {
+      var raw = localStorage.getItem('jazz_lex_ranges');
+      if (raw) all = JSON.parse(raw);
+    } catch (e) { /* localStorage unavailable */ }
+    if (all && typeof all === 'object' && Object.keys(all).length) {
+      var lo = Infinity, hi = -Infinity;
+      Object.keys(all).forEach(function (k) {
+        var r = all[k];
+        if (r && typeof r.lowMidi === 'number' && typeof r.highMidi === 'number') {
+          if (r.lowMidi < lo) lo = r.lowMidi;
+          if (r.highMidi > hi) hi = r.highMidi;
+        }
+      });
+      if (lo < Infinity && hi > -Infinity && hi >= lo) {
+        return { lowMidi: lo, highMidi: hi };
+      }
     }
-    if (!r) r = { lowMidi: 56, highMidi: 76 }; // Ab2..E5 default
-    return r;
+    // Fall back: if the user has touched a single range (jazz_lex_range
+    // legacy key), use it; otherwise alto-sax default (Ab2..E5).
+    try {
+      var legacy = localStorage.getItem('jazz_lex_range');
+      if (legacy) {
+        var parsed = JSON.parse(legacy);
+        if (parsed && typeof parsed.lowMidi === 'number') return parsed;
+      }
+    } catch (e) {}
+    return { lowMidi: 56, highMidi: 76 }; // Ab2..E5 default
+  }
+
+  // Backward-compatible alias used by the Pattern Library knob change
+  // handler and the original getPatternRange caller.
+  function getPatternRange() {
+    return getEtudesRange();
   }
 
   function generatePatternPreview(isReroll) {
@@ -654,6 +691,16 @@
       return;
     }
     var uniqueName = await uniquifyEtudeName(name);
+    // Defensive clamp in case the user's saved range has been tightened
+    // since the preview was generated.
+    try {
+      var rr = getEtudesRange();
+      var clamped = window.etudesStitch.clampToRange(prev.musicxml, rr.lowMidi, rr.highMidi);
+      prev.musicxml = clamped.xml;
+      if (clamped.moved > 0) {
+        toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
+      }
+    } catch (e) { /* fall through with original XML */ }
     var id = window.etudesStore.newId();
     try {
       await window.etudesStore.saveEtude({
@@ -831,8 +878,14 @@
           pickedSnapshot.map(function(p){return {id: p.id, semitones: p.semitones};}),
           namePreset
         ).then(function(xml) {
-          state.random.stitchedXml = xml;
-          renderSvgForXml(previewWrap, xml);
+          // Clamp to the user's saved instrument range before rendering.
+          var r = getEtudesRange();
+          var clamped = window.etudesStitch.clampToRange(xml, r.lowMidi, r.highMidi);
+          state.random.stitchedXml = clamped.xml;
+          renderSvgForXml(previewWrap, clamped.xml);
+          if (clamped.moved > 0) {
+            toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
+          }
         }).catch(function(e) {
           previewWrap.innerHTML = '<p class="muted">Stitch failed: ' +
             (e && e.message ? e.message : e) + '</p>';
@@ -944,6 +997,20 @@
       console.error('stitch failed', e);
       toast('Could not stitch: ' + e.message, true);
       return;
+    }
+
+    // Always clamp to the user's saved instrument range. Any notes
+    // outside the user's playable register get shifted by whole octaves
+    // so the result is always playable.
+    try {
+      var r = getEtudesRange();
+      var clamped = window.etudesStitch.clampToRange(musicxml, r.lowMidi, r.highMidi);
+      if (clamped.moved > 0) {
+        toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
+      }
+      musicxml = clamped.xml;
+    } catch (clampErr) {
+      console.warn('clampToRange failed (continuing with unclamped stitch):', clampErr);
     }
 
     // Avoid duplicate names: if "My Sketch" already exists, save as

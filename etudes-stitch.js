@@ -241,11 +241,86 @@
     const matches = xml.match(/<measure\b(?!-numbering)/g);
     return matches ? matches.length : 0;
   }
+  function countNotes(xml) {
+    if (!xml) return 0;
+    const matches = xml.match(/<note\b/g);
+    return matches ? matches.length : 0;
+  }
+
+  // Walk a MusicXML string and rewrite any note whose MIDI falls outside
+  // [lowMidi, highMidi] so it falls within, by shifting the <octave>.
+  // Returns { xml, moved }. Mirrors server.py:clamp_notes_to_range() so
+  // the browser-side result matches what the server would have produced
+  // for a single exercise (the server doesn't run on stitched scores;
+  // this is the equivalent in JS).
+  function clampToRange(xml, lowMidi, highMidi) {
+    if (!xml) return { xml, moved: 0 };
+    let moved = 0;
+    const pitchRe = /<pitch\b[^>]*>([\s\S]*?)<\/pitch>/g;
+    const out = xml.replace(pitchRe, function (fullMatch, body) {
+      // Match step with optional accidental: A–G, optional 'b' or '#'.
+      const stepM = /<step>\s*([A-Ga-g][#b]?)\s*<\/step>/.exec(body);
+      const octM  = /<octave>\s*(-?\d+)\s*<\/octave>/.exec(body);
+      if (!stepM || !octM) return fullMatch;
+      const step = stepM[1].toUpperCase();
+      const octave = parseInt(octM[1], 10);
+      const altM = /<alter>\s*(-?\d+)\s*<\/alter>/.exec(body);
+      const alter = altM ? parseInt(altM[1], 10) : 0;
+      const midi = pitchToMidiRange(step, alter, octave);
+      if (midi < 0) return fullMatch; // unparseable, leave alone
+      if (midi >= lowMidi && midi <= highMidi) return fullMatch; // in range
+      // Try to shift to a neighbour in the same diatonic step that lands
+      // in range. If no neighbour in range exists (e.g. range is a single
+      // MIDI value, or too narrow for the step), leave the note alone —
+      // there's no point in feeding the user a note that's still out of
+      // range; the alternative is to alert them.
+      // Up to 6 octaves either way covers all horn ranges we'll ever see.
+      let bestShift = 0;
+      for (let s = -6; s <= 6; s++) {
+        if (s === 0) continue;
+        const m = pitchToMidiRange(step, alter, octave + s);
+        if (m < 0) continue;
+        if (m >= lowMidi && m <= highMidi) {
+          bestShift = s;
+          break;
+        }
+      }
+      if (bestShift === 0) return fullMatch; // no valid shift exists
+      moved++;
+      return fullMatch.replace(
+        /<octave>\s*-?\d+\s*<\/octave>/,
+        '<octave>' + (octave + bestShift) + '</octave>'
+      );
+    });
+    return { xml: out, moved: moved };
+  }
+  // Inverse of the existing pitchToMidi (line 35 above). Wraps it with
+  // a sharp- and flat-prefix-aware fallback so clampToRange doesn't
+  // throw on '<step>Bb</step>' or '<step>F#</step>' which the rest of
+  // the file would otherwise trip on. Returns -1 on truly unparseable
+  // input (caller will leave the note unchanged).
+  function pitchToMidiRange(step, alter, octave) {
+    try {
+      return pitchToMidi(step, alter, octave);
+    } catch (e) {
+      if (step.length === 2 && step[0] in STEP_TO_OFFSET) {
+        const delta = step[1] === '#' ? 1 : step[1] === 'b' ? -1 : 0;
+        if (delta === 0) return -1;
+        try {
+          return pitchToMidi(step[0], (alter || 0) + delta, octave);
+        } catch (e2) {
+          return -1;
+        }
+      }
+      return -1;
+    }
+  }
 
   window.etudesStitch = {
     stitch: stitch,
     transposePitch: transposePitch,
     countNotes: countNotes,
     countMeasures: countMeasures,
+    clampToRange: clampToRange,
   };
 })();
