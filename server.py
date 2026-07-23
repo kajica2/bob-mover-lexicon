@@ -1127,13 +1127,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        # Check favorite status
-        m_fav_get = re.match(r"^/api/favorites/(\d+)$", path)
+        # Check favorite status. Accepts numeric exercise IDs (e.g. "262")
+        # and string etude IDs (e.g. "etude_abc123").
+        m_fav_get = re.match(r"^/api/favorites/([^/]+)$", path)
         if m_fav_get:
-            try:
-                eid = int(m_fav_get.group(1))
-            except ValueError:
-                return self.send_json({"error": "Invalid exercise ID"}, 400)
+            eid = m_fav_get.group(1)
             return self.send_json({"exercise_id": eid, "favorited": db.is_favorite(eid)})
         if path == "/api/favorites":
             return self.send_json({"favorites": db.get_favorites()})
@@ -1153,13 +1151,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
-        # Favorite endpoints
-        m_fav = re.match(r"^/api/favorites/(\d+)$", path)
+        # Favorite endpoints. Accepts numeric exercise IDs (e.g. "262")
+        # and string etude IDs (e.g. "etude_abc123").
+        m_fav = re.match(r"^/api/favorites/([^/]+)$", path)
         if m_fav:
-            try:
-                eid = int(m_fav.group(1))
-            except ValueError:
-                return self.send_json({"error": "Invalid exercise ID"}, 400)
+            eid = m_fav.group(1)
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 raw = self.rfile.read(length) if length else b"{}"
@@ -1180,13 +1176,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        # Unfavorite
-        m_fav = re.match(r"^/api/favorites/(\d+)$", path)
+        # Unfavorite (numeric or string ID)
+        m_fav = re.match(r"^/api/favorites/([^/]+)$", path)
         if m_fav:
-            try:
-                eid = int(m_fav.group(1))
-            except ValueError:
-                return self.send_json({"error": "Invalid exercise ID"}, 400)
+            eid = m_fav.group(1)
             db.remove_favorite(eid)
             return self.send_json({"ok": True, "favorited": False})
         # Delete a practice log entry

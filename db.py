@@ -60,9 +60,35 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_practice_time
             ON practice_log(practiced_at DESC)
         """)
+        # Migration: favorites.exercise_id was originally INTEGER PRIMARY KEY
+        # but we now want to support string etude IDs (e.g. "etude_<uuid>")
+        # alongside numeric exercise IDs. SQLite can't ALTER a column's
+        # type, so if the old INTEGER schema is in place we copy the rows
+        # to a new TEXT-typed table, drop the old one, and rename.
+        # Old numeric favorites are preserved (cast to TEXT); the migration
+        # is idempotent and runs only when needed.
+        c.execute("PRAGMA table_info(favorites)")
+        cols = c.fetchall()
+        if cols and cols[0][2] == 'INTEGER':
+            # Old INTEGER schema detected. Recreate as TEXT.
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS __favorites_migrated (
+                    exercise_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            try:
+                c.execute("""
+                    INSERT OR IGNORE INTO __favorites_migrated (exercise_id, created_at)
+                    SELECT CAST(exercise_id AS TEXT), created_at FROM favorites
+                """)
+            except sqlite3.OperationalError:
+                pass
+            c.execute("DROP TABLE favorites")
+            c.execute("ALTER TABLE __favorites_migrated RENAME TO favorites")
         c.execute("""
             CREATE TABLE IF NOT EXISTS favorites (
-                exercise_id INTEGER PRIMARY KEY,
+                exercise_id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
