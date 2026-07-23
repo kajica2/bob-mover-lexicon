@@ -94,6 +94,25 @@
     return 12 * (octave + 1) + stepMap[step] + (alter || 0);
   }
 
+  // Clean an exercise title for display in the player header. The
+  // source titles sometimes carry trailing "  . . . N" page numbers
+  // or repeated dots from the original PDF extraction; collapse
+  // those so the header reads cleanly.
+  //   "Major 3rds with neighbor notes, ascending in minor 3rds"
+  //   "Diatonic 6ths with neighbor notes, descending ... 9"
+  //   "II V I phrase using stacked 4ths a half step apart, descending chromatically"
+  function cleanExerciseTitle(raw) {
+    if (!raw) return '';
+    let t = String(raw);
+    // Strip trailing page numbers like " 9" or " 23" that follow ellipses.
+    t = t.replace(/\s*\.\s*\.+(\s+\d+)?\s*$/, '');
+    // Collapse runs of dots to a single ellipsis with surrounding spaces.
+    t = t.replace(/\s*\.(\s*\.)+\s*/g, ' ... ');
+    // Tidy double spaces and trim.
+    t = t.replace(/\s+/g, ' ').trim();
+    return t;
+  }
+
   // ===== Cycle (adds bars across keys) =====
   // When the user picks a Cycle mode other than 'off' and Bars > 1, the
   // current exercise is repeated Bars times during playback, each repetition
@@ -358,9 +377,14 @@
       return;
     }
     document.getElementById('ex-num').textContent = `#${id}`;
-    // Title in the player header shows just the exercise number; the
-    // full name is rendered by Verovio at the top of the score.
-    document.getElementById('ex-title').textContent = `#${id}`;
+    // The full exercise title (e.g. "Major 3rds with neighbor notes,
+    // ascending in minor 3rds") is shown in the player header so
+    // the user can identify the exercise without scanning to the
+    // score. Source titles sometimes carry trailing "...  N" page
+    // numbers from the original PDF extraction; strip those and
+    // collapse repeated dots into a single ellipsis so the header
+    // reads cleanly.
+    document.getElementById('ex-title').textContent = cleanExerciseTitle(ex.title);
     document.getElementById('ex-section').textContent = `§${ex.section}`;
     document.getElementById('ex-page').textContent = `p.${ex.page}`;
 

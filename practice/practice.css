@@ -36,6 +36,13 @@
   color: var(--ink-700);
   margin: 0 0 8px;
   font-weight: 500;
+  line-height: 1.3;
+  /* Long titles like "Major 3rds with neighbor notes, ascending in
+     minor 3rds" (60+ chars) need to wrap rather than overflow the
+     player panel. word-break: break-word handles very long single
+     tokens (e.g. "chromatically" at narrow widths). */
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .player-header .ex-meta {
   display: flex;
