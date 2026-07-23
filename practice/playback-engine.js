@@ -315,40 +315,55 @@
   // don't hear THIS, the problem is macOS audio output (system volume,
   // output device, Bluetooth disconnect), not the synth path.
   //
-  // Returns true if the trigger was scheduled, false if synth isn't
-  // built (call init() first).
+  // Returns an object with status info rather than a bare boolean — that
+  // way the button status display can show WHY it failed (Tone missing,
+  // synth not built, etc.) rather than just "test failed".
+  //
+  // { ok: true|false, message: string, context: 'suspended'|'running'|'closed' }
   function testSound() {
+    var result = { ok: false, message: '', context: 'unknown' };
     if (!synth) {
-      if (!init()) return false;
+      if (!init()) {
+        result.message = 'init failed (Tone.js not loaded?)';
+        return result;
+      }
     }
-    const T = tone;
-    if (!T) return false;
+    var T = tone;
+    if (!T) {
+      result.message = 'Tone.js unavailable';
+      return result;
+    }
+    result.context = T.getContext().state;
     // Synchronously kick Tone.start() AND return the Promise itself
     // so the click handler can `await` it. If the AudioContext is
     // already 'running', Tone.start() resolves immediately and the
     // await is a no-op. If it's 'suspended' (the typical first-click
     // case), the await blocks until the user gesture unlocks audio,
     // at which point the trigger is genuinely audible.
-    const startPromise = (T.getContext().state === 'suspended')
+    var startPromise = (result.context === 'suspended')
       ? T.start()
       : null;
     if (startPromise && typeof startPromise.then === 'function') {
-      // Return a Promise that fires the trigger once the context unlocks.
-      // The button click handler can ignore the Promise and just trust
-      // that the click gesture + the pending trigger will produce sound.
       startPromise.then(function(){
         try {
           synth.triggerAttackRelease(4, T.now() + 0.05, 400);
         } catch (e) {}
-      }).catch(function(){});
-      return true;
+      }).catch(function(){
+        result.context = T.getContext().state;
+      });
+      result.ok = true;
+      result.message = '4s 400Hz tone armed (will fire when audio unlocks)';
+      return result;
     }
     // Already running — fire immediately.
     try {
       synth.triggerAttackRelease(4, T.now() + 0.05, 400);
-      return true;
+      result.ok = true;
+      result.message = '4s 400Hz tone fired (audio running)';
+      return result;
     } catch (e) {
-      return false;
+      result.message = 'synth.triggerAttackRelease threw: ' + (e && e.message);
+      return result;
     }
   }
 

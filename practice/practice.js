@@ -1293,9 +1293,19 @@
     if (testBtn) {
       testBtn.addEventListener('click', () => {
         const eng = window.playbackEngine;
-        if (!eng) { setStatus('engine missing', 'error'); return; }
-        const fired = eng.testSound();
-        setStatus(fired ? 'test firing — listen!' : 'test failed', fired ? 'playing' : 'error');
+        if (!eng || typeof eng.testSound !== 'function') {
+          setStatus('engine missing', 'error');
+          return;
+        }
+        const result = eng.testSound();
+        if (result && typeof result === 'object' && 'ok' in result) {
+          setStatus(result.ok ? '✓ ' + result.message : '✗ ' + result.message,
+                    result.ok ? 'playing' : 'error');
+        } else {
+          // Legacy boolean return — preserve old behavior.
+          setStatus(result ? 'test firing — listen!' : 'test failed',
+                    result ? 'playing' : 'error');
+        }
       });
     }
 
