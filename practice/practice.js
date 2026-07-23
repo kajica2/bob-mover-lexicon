@@ -304,6 +304,28 @@
     indexScoreNotePositions();
   }
 
+  // Cancel any in-flight MIDI playback and reset the Play/Stop button
+  // state. Defined up here (above loadExercise) so it's hoisted and
+  // definitely available when loadExercise runs. Called when navigating
+  // to a different exercise so notes from the previous one don't bleed
+  // into the new score.
+  function stopPlayback() {
+    const eng = window.playbackEngine;
+    if (eng) {
+      try { eng.stop(); } catch (e) {}
+    }
+    clearNoteHighlights();
+    const playBtn = document.getElementById('btn-playback-play');
+    const stopBtn = document.getElementById('btn-playback-stop');
+    if (playBtn) playBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
+    const statusEl = document.getElementById('playback-status');
+    if (statusEl) {
+      statusEl.textContent = 'ready';
+      statusEl.className = 'playback-status';
+    }
+  }
+
   function zoomIn() {
     state.zoomScale = Math.min(120, state.zoomScale + 10);
     renderAtScale();
@@ -1162,26 +1184,7 @@
   // Wires the Playback control row (Play/Stop/tempo-slider/metronome) to
   // window.playbackEngine loaded from playback-engine.js. The engine
   // handles the actual audio synthesis; this code is just the UI glue.
-
-  // Cancel any in-flight playback and reset the Play/Stop button state.
-  // Called when navigating to a different exercise so notes from the
-  // previous one don't bleed into the new score.
-  function stopPlayback() {
-    const eng = window.playbackEngine;
-    if (eng) {
-      try { eng.stop(); } catch (e) {}
-    }
-    clearNoteHighlights();
-    const playBtn = document.getElementById('btn-playback-play');
-    const stopBtn = document.getElementById('btn-playback-stop');
-    if (playBtn) playBtn.disabled = false;
-    if (stopBtn) stopBtn.disabled = true;
-    const statusEl = document.getElementById('playback-status');
-    if (statusEl) {
-      statusEl.textContent = 'ready';
-      statusEl.className = 'playback-status';
-    }
-  }
+  // (stopPlayback is defined above loadExercise for hoisting safety.)
 
   function wirePlaybackControls() {
     const playBtn  = document.getElementById('btn-playback-play');
