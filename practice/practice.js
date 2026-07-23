@@ -314,7 +314,7 @@
     if (eng) {
       try { eng.stop(); } catch (e) {}
     }
-    clearNoteHighlights();
+    if (typeof clearNoteHighlights === 'function') clearNoteHighlights();
     const playBtn = document.getElementById('btn-playback-play');
     const stopBtn = document.getElementById('btn-playback-stop');
     if (playBtn) playBtn.disabled = false;
