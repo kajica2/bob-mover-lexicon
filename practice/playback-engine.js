@@ -23,7 +23,13 @@
   const ATTACK = 0.01;
   const DECAY = 0.08;
   const SUSTAIN = 0.55; // fraction of peak
-  const RELEASE = 0.12;
+  // RELEASE is the long tail we used to allow notes to ring; under the
+  // strictly-monophonic model notes are cut when the next one attacks,
+  // so we keep only a tiny tail for the very last note of the piece.
+  const RELEASE = 0.04;
+  // MONO_TAIL is the extra silence after the last note so it doesn't
+  // cut off abruptly at the natural endAt. It's a few ms past RELEASE.
+  const MONO_TAIL = 0.06;
   const MASTER_GAIN = 0.18;
   const LEAD_IN = 0.05; // schedule events 50ms in the future for clean alignment
 
@@ -90,7 +96,11 @@
   }
 
   // Schedule a single note: triangle osc → gain envelope → master.
+  // Strictly monophonic — each new note cancels the previous one's
+  // oscillator so no two notes sound simultaneously. The previous note
+  // gets a very short release ramp (15ms) to avoid a click at the cut.
   // Returns the scheduled object so we can stop it on stop()/dispose().
+  let prevNote = null;  // { osc, gain, endAt } — last scheduled note
   function scheduleNote(note, beatToTime) {
     const startBeat = beatToTime(note.beat);
     const dur = Math.max(MIN_DUR, note.duration * 60 / bpm);
@@ -98,7 +108,20 @@
     const peakAt = startAbs + ATTACK;
     const sustainAt = peakAt + DECAY;
     const releaseAt = startAbs + dur;
-    const endAt = releaseAt + RELEASE;
+    const endAt = releaseAt + MONO_TAIL;
+
+    // Cut the previous note at the new note's attack time with a short
+    // release ramp. Two oscillators must NEVER sound together.
+    if (prevNote) {
+      try {
+        const cutAt = Math.max(prevNote.gain.gain.value, 0);
+        const p = prevNote;
+        p.gain.gain.cancelScheduledValues(startAbs);
+        p.gain.gain.setValueAtTime(cutAt, startAbs);
+        p.gain.gain.linearRampToValueAtTime(0, startAbs + 0.015);
+        p.osc.stop(startAbs + 0.02);
+      } catch (e) { /* osc may have already stopped */ }
+    }
 
     const osc = ctx.createOscillator();
     osc.type = 'triangle';
@@ -116,6 +139,8 @@
 
     osc.start(startAbs);
     osc.stop(endAt);
+
+    prevNote = { osc, gain, endAt };
 
     // Visual callback at note attack.
     const cbId = _scheduleCallback(startAbs, function () {
@@ -200,6 +225,7 @@
       }
     }
     scheduled = [];
+    prevNote = null;
   }
 
   // Compute total beats across the note array (max of beat + duration).
