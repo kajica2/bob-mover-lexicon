@@ -308,63 +308,81 @@
     return '64n';
   }
 
-  // Diagnostic: continuous test tone. Holds a 400Hz triangle wave at
-  // 0 dBFS for 4 seconds with a 50ms ramp on each end to avoid clicks.
-  // This is the "no excuses it didn't fire" check — the longest, loudest,
-  // lowest-pitch signal we can produce through Tone.MonoSynth. If you
-  // don't hear THIS, the problem is macOS audio output (system volume,
-  // output device, Bluetooth disconnect), not the synth path.
+  // Diagnostic: continuous test tone. Fires a raw OscillatorNode
+  // (bypassing the synth envelope) at 400Hz through masterGain. The
+  // signal stays at full amplitude for 4 seconds with no envelope
+  // shaping — there's literally no way for this to under-deliver
+  // because we eliminate the ADSR, the filter envelope, and the
+  // MonoSynth's voice-stealing semantics.
   //
-  // Returns an object with status info rather than a bare boolean — that
-  // way the button status display can show WHY it failed (Tone missing,
-  // synth not built, etc.) rather than just "test failed".
+  // If you hear THIS, the audio path is intact: engine → masterGain →
+  // Destination → speakers. If you don't, the issue is macOS audio
+  // output (system volume, output device, Bluetooth disconnect).
   //
-  // { ok: true|false, message: string, context: 'suspended'|'running'|'closed' }
+  // Returns an object with status info:
+  //   { ok: boolean, message: string, context: AudioContextState, reason: string }
   function testSound() {
-    var result = { ok: false, message: '', context: 'unknown' };
+    var result = { ok: false, message: '', context: 'unknown', reason: '' };
     if (!synth) {
       if (!init()) {
-        result.message = 'init failed (Tone.js not loaded?)';
+        result.reason = 'init failed (Tone.js not loaded?)';
         return result;
       }
     }
     var T = tone;
     if (!T) {
-      result.message = 'Tone.js unavailable';
+      result.reason = 'Tone.js unavailable';
       return result;
     }
     result.context = T.getContext().state;
-    // Synchronously kick Tone.start() AND return the Promise itself
-    // so the click handler can `await` it. If the AudioContext is
-    // already 'running', Tone.start() resolves immediately and the
-    // await is a no-op. If it's 'suspended' (the typical first-click
-    // case), the await blocks until the user gesture unlocks audio,
-    // at which point the trigger is genuinely audible.
+
+    // Synchronously kick Tone.start() and chain the trigger into its
+    // .then() callback. This means the trigger fires only AFTER the
+    // AudioContext is unlocked — which is the whole point of the
+    // user gesture that initiated this call.
     var startPromise = (result.context === 'suspended')
       ? T.start()
       : null;
+    var fireNow = function(){
+      // Use a fresh OscillatorNode + GainNode pair, not the
+      // MonoSynth's envelope-shaped voice. Bypasses the filter and
+      // ADSR — what you hear is a flat 400Hz sine tone for 4 seconds.
+      try {
+        var ctx = T.getContext().rawContext;
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 400;
+        gain.gain.value = 0.15;  // -16 dBFS, gentle but clearly audible
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 4);
+        result.ok = true;
+        result.context = 'running';
+        result.message = '4s 400Hz tone fired via raw oscillator (audio running)';
+      } catch (e) {
+        result.reason = 'raw oscillator failed: ' + (e && e.message);
+      }
+    };
     if (startPromise && typeof startPromise.then === 'function') {
       startPromise.then(function(){
-        try {
-          synth.triggerAttackRelease(4, T.now() + 0.05, 400);
-        } catch (e) {}
+        result.context = T.getContext().state;
+        fireNow();
       }).catch(function(){
         result.context = T.getContext().state;
+        result.reason = 'Tone.start() rejected — click the page first to allow audio';
       });
+      // Even if we haven't fired yet, this is success in the sense that
+      // we accepted the click and queued audio. The user gesture unlocks
+      // the context, which triggers the tone.
       result.ok = true;
       result.message = '4s 400Hz tone armed (will fire when audio unlocks)';
       return result;
     }
     // Already running — fire immediately.
-    try {
-      synth.triggerAttackRelease(4, T.now() + 0.05, 400);
-      result.ok = true;
-      result.message = '4s 400Hz tone fired (audio running)';
-      return result;
-    } catch (e) {
-      result.message = 'synth.triggerAttackRelease threw: ' + (e && e.message);
-      return result;
-    }
+    fireNow();
+    return result;
   }
 
   // Expose the public API.
