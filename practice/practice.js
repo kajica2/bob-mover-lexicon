@@ -1284,6 +1284,21 @@
       setStatus('ready');
     });
 
+    // Test Sound button: fires window.playbackEngine.testSound() to verify
+    // audio output works, independent of the schedule/transport logic. If
+    // you don't hear a 4-second 400Hz tone after pressing this, the issue
+    // is at the macOS audio layer (system volume, output device, etc.) —
+    // not anything in the engine.
+    const testBtn = document.getElementById('btn-playback-test');
+    if (testBtn) {
+      testBtn.addEventListener('click', () => {
+        const eng = window.playbackEngine;
+        if (!eng) { setStatus('engine missing', 'error'); return; }
+        const fired = eng.testSound();
+        setStatus(fired ? 'test firing — listen!' : 'test failed', fired ? 'playing' : 'error');
+      });
+    }
+
     if (tempo) {
       tempo.addEventListener('input', () => {
         refreshTempoLabel();

@@ -108,6 +108,7 @@
               <label>Playback</label>
               <button id="btn-playback-play" class="btn btn-primary" title="Play exercise (Space)">▶ Play</button>
               <button id="btn-playback-stop" class="btn btn-secondary" disabled title="Stop (Space)">■ Stop</button>
+              <button id="btn-playback-test" class="btn btn-ghost btn-sm" title="Fire a 4-second 400Hz tone to verify audio output works" style="font-size:11px;padding:2px 6px">🔊 Test</button>
               <label class="tempo-label" for="playback-tempo">Tempo
                 <input id="playback-tempo" type="range" min="40" max="240" value="100" class="tempo-slider">
                 <span id="playback-tempo-label" class="tempo-display">100%</span>
@@ -213,13 +214,13 @@
     </div>
   </main>
 
-  <script src="vendor/verovio-toolkit.js?v=14"></script>
-  <script src="vendor/Tone.js?v=14"></script>
-  <script src="../range-modal.js?v=14"></script>
-  <script src="takes-store.js?v=14"></script>
-  <script src="../etudes-store.js?v=14"></script>
-  <script src="playback-engine.js?v=14"></script>
-  <script src="practice.js?v=14"></script>
+  <script src="vendor/verovio-toolkit.js?v=15"></script>
+  <script src="vendor/Tone.js?v=15"></script>
+  <script src="../range-modal.js?v=15"></script>
+  <script src="takes-store.js?v=15"></script>
+  <script src="../etudes-store.js?v=15"></script>
+  <script src="playback-engine.js?v=15"></script>
+  <script src="practice.js?v=15"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
     <div class="fullpage-toolbar">
