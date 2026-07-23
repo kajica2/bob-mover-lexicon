@@ -318,23 +318,29 @@
     }
     const T = tone;
     if (!T) return false;
-    // Tone.start() returns a Promise. Fire-and-forget; if the context
-    // is in 'suspended' state the trigger is queued and fires when
-    // the user gesture unlocks audio.
+    // Synchronously kick Tone.start() AND return the Promise itself
+    // so the click handler can `await` it. If the AudioContext is
+    // already 'running', Tone.start() resolves immediately and the
+    // await is a no-op. If it's 'suspended' (the typical first-click
+    // case), the await blocks until the user gesture unlocks audio,
+    // at which point the trigger is genuinely audible.
+    const startPromise = (T.getContext().state === 'suspended')
+      ? T.start()
+      : null;
+    if (startPromise && typeof startPromise.then === 'function') {
+      // Return a Promise that fires the trigger once the context unlocks.
+      // The button click handler can ignore the Promise and just trust
+      // that the click gesture + the pending trigger will produce sound.
+      startPromise.then(function(){
+        try {
+          synth.triggerAttackRelease(4, T.now() + 0.05, 400);
+        } catch (e) {}
+      }).catch(function(){});
+      return true;
+    }
+    // Already running — fire immediately.
     try {
-      if (T.getContext().state === 'suspended') {
-        const p = T.start();
-        if (p && typeof p.catch === 'function') p.catch(function(){});
-      }
-    } catch (e) {}
-    // Hold a single 4-second triangle 400Hz at 0dBFS. 400Hz is the
-    // base of the audible-range voice band and most speakers can
-    // produce it at full volume without distorting. The synth's
-    // envelope (attack 0.01, decay 0.08, sustain 0.55) keeps it
-    // sustained for the full duration; release fires on stop().
-    const t0 = T.now() + 0.05;
-    try {
-      synth.triggerAttackRelease(4, t0, 400);
+      synth.triggerAttackRelease(4, T.now() + 0.05, 400);
       return true;
     } catch (e) {
       return false;
