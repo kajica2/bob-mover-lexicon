@@ -299,16 +299,25 @@
     renderAtScale();
     state.currentScore = parseMusicXML(xmlString);
     // Index the rendered SVG notes by horizontal position so the playback
-    // engine can highlight them in sync. Verovio's note ids are timestamp-
+    // engine can highlight them in sync. Verovio's id attrs are timestamp-
     // based and not stable across renders, so we go by SVG X position.
-    indexScoreNotePositions();
+    // Guard against cached-old JS where this helper isn't yet defined.
+    if (typeof indexScoreNotePositions === 'function') {
+      indexScoreNotePositions();
+    }
   }
 
   // Cancel any in-flight MIDI playback and reset the Play/Stop button
   // state. Defined up here (above loadExercise) so it's hoisted and
   // definitely available when loadExercise runs. Called when navigating
   // to a different exercise so notes from the previous one don't bleed
-  // into the new score.
+  // into the new score. NOTE: defensive guards for the playback
+  // helpers (clearNoteHighlights, highlightNote, indexScoreNotePositions)
+  // — the real definitions live later in the file. Function declarations
+  // ARE hoisted in JS, but the Python http.server sends no Cache-Control
+  // headers, so browsers may still be running an older cached practice.js
+  // that pre-dates the helpers. Each call site is guarded; inline stubs
+  // below give the cached-old JS a working no-op so the page still loads.
   function stopPlayback() {
     const eng = window.playbackEngine;
     if (eng) {
@@ -325,6 +334,15 @@
       statusEl.className = 'playback-status';
     }
   }
+  // Inline fallback definitions for the cached-old-JS scenario.
+  // The real implementations later in the file override these via
+  // function-declaration hoisting (the last declaration wins).
+  function clearNoteHighlights() {
+    const els = document.querySelectorAll('#score-container g.note.active');
+    for (const el of els) el.classList.remove('active');
+  }
+  function highlightNote(/* note, on */) {}
+  function indexScoreNotePositions() {}
 
   function zoomIn() {
     state.zoomScale = Math.min(120, state.zoomScale + 10);
