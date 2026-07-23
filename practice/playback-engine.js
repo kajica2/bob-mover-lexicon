@@ -30,20 +30,50 @@
   const METRO_DOWN_VOL = -20;  // dBFS
   const METRO_BEAT_HZ  = 1000;
   const METRO_BEAT_VOL = -26;
+  const METRO_SUB_HZ   = 1400; // higher than offbeat click so subdivisions pop
   const METRO_DUR      = 0.05; // seconds per click
 
-  // Gain for note playback through the raw oscillator path. The v19
-  // testSound revealed that MonoSynth's ADSR + filter envelope combo
-  // shaped the signal down to inaudibility on built-in Mac speakers.
-  // Plain sine/triangle oscillators at constant ~0.3 gain through
-  // masterGain → Destination is unmistakably audible. NOTE_GAIN_AMP
+  // Time signature → beats per bar. Used for the metronome's downbeat
+  // detection. 6/8 is 6 eighth-note "pulses" per bar, with downbeats
+  // every 3 (so beat 0 and beat 3 of each bar get the accent).
+  const TIME_SIG_BEATS = { '4/4': 4, '3/4': 3, '6/8': 6, '2/4': 2 };
+  // For 6/8, the metric "downbeat" is the dotted-quarter pulse, not
+  // the literal beat 0/6. We override isDownbeat for 6/8 below.
+
+  // Gain for note playback through the raw oscillator path. v22
+  // polish: switched the body waveform from sine to triangle — it has
+  // a touch of odd-harmonic content (-12dB/oct rolloff) that gives the
+  // note a warm, sax-like presence on built-in Mac speakers without
+  // the harshness of sawtooth. Plain oscillators at constant ~0.3 gain
+  // through masterGain → Destination is unmistakably audible. NOTE_GAIN_AMP
   // sets the per-note linear gain; 0.30 = ~ -10 dBFS, well above
   // the noise floor but below digital clipping on busy runs.
   const NOTE_GAIN_AMP = 0.30;
-  // Tiny ramp at attack/release to suppress clicks at note edges.
-  // 0.005s = 5ms; smaller than a musician's perception but enough
-  // to avoid the "click on every note" artifact.
-  const NOTE_RAMP_SEC = 0.005;
+  // Ramp at attack/release to suppress clicks at note edges. v22:
+  // bumped from 0.005s to 0.010s — slightly smoother on the ear, and
+  // matches the 5-10ms range used by commercial soft synths.
+  const NOTE_RAMP_SEC = 0.010;
+
+  // Is a given beat the downbeat for a time signature? Returns true
+  // for beat 0 of each bar. For 6/8 we treat the dotted-quarter pulse
+  // (every 3 eighths) as the downbeat — that's how musicians hear it.
+  function isDownbeat(beatNum, timeSig) {
+    const beats = TIME_SIG_BEATS[timeSig] || 4;
+    if (timeSig === '6/8') return (beatNum % 3) === 0;
+    return (beatNum % beats) === 0;
+  }
+
+  // Subdivision setting → Tone.Transport.scheduleRepeat interval string.
+  // 'off' = 4n (one click per beat); '8ths' = 8n; 'triplets' = 8t;
+  // '16ths' = 16n. The beat counter passed to onBeat increments
+  // every subdivision tick, so the UI can know which subdivision
+  // just fired (0 = downbeat if isDownbeat(subCount, timeSig)).
+  const SUBDIV_TO_INTERVAL = {
+    off:     '4n',
+    '8ths':  '8n',
+    triplets:'8t',
+    '16ths': '16n',
+  };
 
   // Visual callbacks fire via Tone.Draw so they align with render frames.
   // Web Audio's `setTimeout`-driven callbacks jitter; Tone.Draw is locked
@@ -57,11 +87,19 @@
   let notes       = [];          // current note array
   let bpm         = 120;         // currently-applied BPM
   let metronomeOn = false;
+  // Metronome configuration — used by both in-exercise and standalone
+  // metronome paths. v22 added: timeSig (4/4, 3/4, 6/8, 2/4) and
+  // subdivision (off, 8ths, triplets, 16ths). Downbeats (per timeSig)
+  // get a higher pitch; subdivisions get a higher-pitch click than
+  // offbeats but lower than downbeats.
+  let metroConfig = { timeSig: '4/4', subdivision: 'off' };
   let scheduledIds = [];         // Tone.Transport event ids (for cancel)
   let onNoteCb    = null;
   let onBeatCb    = null;
   let onEndCb     = null;
   let initialized = false;
+  // Standalone-metronome-only state (set/cleared by startMetronome/stopMetronome)
+  let metroRepeatId = null;      // Transport.scheduleRepeat handle
 
   function ensureTone() {
     if (tone) return tone;
@@ -142,6 +180,10 @@
   }
 
   // Stop any scheduled transport events + silence the synth.
+  // v22: don't stop the Transport if the standalone metronome is
+  // running — scheduleRepeat is driven by the Transport, so stopping
+  // it would also kill the standalone. Only halt the Transport when
+  // there's nothing left to drive.
   function clearScheduled() {
     if (!tone) return;
     try {
@@ -235,19 +277,44 @@
 
     // Metronome (optional): one click per beat across the score, locked
     // to transport time so it stays in sync even after tempo changes.
+    // v22: respects metroConfig.timeSig (downbeat detection) and
+    // metroConfig.subdivision (extra clicks per beat). Each scheduled
+    // callback is one click; the onBeat payload tells the UI which
+    // beat/subdivision just fired so the visual flash can match.
     if (metronomeOn) {
       const totalBeats = Math.ceil(totalBeatsOf(notes));
+      const timeSig = metroConfig.timeSig || '4/4';
+      const subdivision = metroConfig.subdivision || 'off';
+      // For each BEAT, schedule (1 + Nsub) clicks: one downbeat/offbeat
+      // at the beat, then Nsub subdivisions spread evenly inside the
+      // beat. With 'off' this is just the one click per beat.
+      const subSteps = subdivision === 'off' ? [0]
+        : subdivision === '8ths'  ? [0, 0.5]
+        : subdivision === 'triplets' ? [0, 1/3, 2/3]
+        : subdivision === '16ths' ? [0, 0.25, 0.5, 0.75]
+        : [0];
       for (let b = 0; b < totalBeats; b++) {
-        const isDown = (b % 4) === 0;
-        const onBeat = onBeatCb;
-        const clickHz = isDown ? METRO_DOWN_HZ : METRO_BEAT_HZ;
-        const id = T.Transport.scheduleOnce(function(t){
-          scheduleNoteRaw(rawCtx, 60, t, METRO_DUR, true);
-          if (onBeat) {
-            try { T.Draw.schedule(function(){ onBeat(b); }, t); } catch (e) {}
-          }
-        }, formatBeatTime(b));
-        scheduledIds.push(id);
+        const isBeatDown = isDownbeat(b, timeSig);
+        for (let s = 0; s < subSteps.length; s++) {
+          const subOffset = subSteps[s];          // 0..0.75 of a beat
+          const isSubdivision = (s > 0);
+          // timeStr: beat b + subOffset (in beats)
+          const beatTime = b + subOffset;
+          const isDown = isBeatDown && !isSubdivision;
+          const onBeat = onBeatCb;
+          const hz = isDown ? METRO_DOWN_HZ
+            : isSubdivision ? METRO_SUB_HZ
+            : METRO_BEAT_HZ;
+          const id = T.Transport.scheduleOnce(function(t){
+            scheduleNoteRaw(rawCtx, 60, t, METRO_DUR, true);
+            if (onBeat) {
+              try { T.Draw.schedule(function(){
+                onBeat({ beat: b, sub: s, isDown, isSubdivision, beatTime });
+              }, t); } catch (e) {}
+            }
+          }, formatBeatTime(beatTime));
+          scheduledIds.push(id);
+        }
       }
     }
 
@@ -268,9 +335,13 @@
   }
 
   // Halt + cancel scheduled events.
+  // v22: if the standalone metronome is running, DON'T call
+  // Transport.stop() — that would also halt scheduleRepeat and kill
+  // the click track. Just clear the exercise's scheduled events and
+  // release the synth; the Transport keeps ticking for the standalone.
   function stop() {
     clearScheduled();
-    if (tone) {
+    if (tone && metroRepeatId == null) {
       try { tone.Transport.stop(); } catch (e) {}
     }
     onNoteCb = null;
@@ -291,6 +362,124 @@
   // Toggle metronome. We don't pre-schedule here; play() handles it.
   function setMetronome(on) {
     metronomeOn = !!on;
+  }
+
+  // Configure metronome options (time signature, subdivision). v22.
+  // Takes effect on the next play() (in-exercise) or the next
+  // startMetronome() (standalone). Hot-swapping during playback is
+  // supported for the in-exercise case only because play() pre-schedules
+  // its clicks; standalone always re-arms on config change.
+  function setMetroConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object') return;
+    if (typeof cfg.timeSig === 'string' && cfg.timeSig in TIME_SIG_BEATS) {
+      metroConfig.timeSig = cfg.timeSig;
+    }
+    if (typeof cfg.subdivision === 'string' && cfg.subdivision in SUBDIV_TO_INTERVAL) {
+      metroConfig.subdivision = cfg.subdivision;
+    }
+  }
+
+  // Standalone metronome: free-running click track independent of any
+  // exercise. v22. Uses Tone.Transport.scheduleRepeat so the engine
+  // keeps accurate timing even across BPM changes. Returns true on
+  // success, false if Tone isn't ready.
+  //
+  // opts: { bpm, timeSig, subdivision, volume (0..1), onBeat }
+  //   bpm: 40..240, default 100
+  //   timeSig: '4/4' | '3/4' | '6/8' | '2/4', default '4/4'
+  //   subdivision: 'off' | '8ths' | 'triplets' | '16ths', default 'off'
+  //   volume: 0..1 linear, default 0.5
+  //   onBeat: function({ beat, sub, isDown, isSubdivision, beatTime })
+  function startMetronome(opts) {
+    opts = opts || {};
+    if (!init()) return false;
+    const T = tone;
+    if (!T) return false;
+    // Stop any current standalone or exercise playback first
+    stopMetronome();
+    stop();
+
+    const bpmTarget = (typeof opts.bpm === 'number' && isFinite(opts.bpm) && opts.bpm > 0)
+      ? Math.max(40, Math.min(240, opts.bpm))
+      : 100;
+    const timeSig = (typeof opts.timeSig === 'string' && opts.timeSig in TIME_SIG_BEATS)
+      ? opts.timeSig : '4/4';
+    const subdivision = (typeof opts.subdivision === 'string' && opts.subdivision in SUBDIV_TO_INTERVAL)
+      ? opts.subdivision : 'off';
+    metroConfig = { timeSig, subdivision };
+    const vol = (typeof opts.volume === 'number' && isFinite(opts.volume))
+      ? Math.max(0, Math.min(1, opts.volume)) : 0.5;
+    const onBeat = typeof opts.onBeat === 'function' ? opts.onBeat : null;
+
+    try { T.Transport.bpm.value = bpmTarget; } catch (e) {}
+
+    // Counter for onBeat — increments per subdivision tick, not per bar.
+    let counter = 0;
+    const rawCtx = T.getContext().rawContext;
+    const interval = SUBDIV_TO_INTERVAL[subdivision] || '4n';
+    const VOL_DOWN = 0.4 * vol;
+    const VOL_BEAT = 0.28 * vol;
+    const VOL_SUB  = 0.22 * vol;
+
+    try {
+      metroRepeatId = T.Transport.scheduleRepeat(function(time){
+        const b = Math.floor(counter);
+        const s = 0; // scheduleRepeat only fires on the chosen interval,
+                     // so each tick IS a "subdivision 0" of the next counter
+                     // value. The sub index is implicit: s=0 always.
+        // We track beats via the counter relative to subdivision density.
+        // To know if THIS tick is a downbeat, we look at the beat it
+        // belongs to. With 'off' the counter increments 1 per beat, so
+        // b=counter. With 8ths, counter increments 2 per beat. With
+        // triplets, 3 per beat. With 16ths, 4 per beat.
+        const subPerBeat = subdivision === 'off' ? 1
+          : subdivision === '8ths' ? 2
+          : subdivision === 'triplets' ? 3
+          : 4;
+        const isDown = isDownbeat(b, timeSig) && (s === 0);
+        const isSubdivision = false; // scheduleRepeat always lands on the
+                                     // beat or subdivision — but from the
+                                     // caller's perspective each tick is
+                                     // the metric pulse, with isDown
+                                     // already encoding the sub-state
+        const hz = isDown ? METRO_DOWN_HZ : METRO_BEAT_HZ;
+        const peak = isDown ? VOL_DOWN : VOL_BEAT;
+        // Use scheduleNoteRaw with isClick=true, but with our own vol.
+        // The simplest: emit a click directly with peak amplitude.
+        try {
+          var osc = rawCtx.createOscillator();
+          var gain = rawCtx.createGain();
+          osc.type = 'square';
+          osc.frequency.value = hz;
+          gain.gain.setValueAtTime(peak, time);
+          gain.gain.exponentialRampToValueAtTime(0.001, time + METRO_DUR);
+          osc.connect(gain);
+          gain.connect(rawCtx.destination);
+          osc.start(time);
+          osc.stop(time + METRO_DUR + 0.02);
+        } catch (e) {}
+        if (onBeat) {
+          try { T.Draw.schedule(function(){
+            onBeat({ beat: b, sub: s, isDown, isSubdivision, beatTime: b });
+          }, time); } catch (e) {}
+        }
+        counter++;
+      }, interval);
+    } catch (e) { return false; }
+
+    try { T.Transport.start('+0.05'); } catch (e) {}
+    return true;
+  }
+
+  function stopMetronome() {
+    if (tone && metroRepeatId != null) {
+      try { tone.Transport.clear(metroRepeatId); } catch (e) {}
+    }
+    metroRepeatId = null;
+  }
+
+  function isMetronomeRunning() {
+    return metroRepeatId != null;
   }
 
   // Tear down.
@@ -358,9 +547,12 @@
       osc.start(startAt);
       osc.stop(startAt + durationSec + 0.02);
     } else {
-      // Exercise note: pure sine, no ADSR. A tiny ramp at the boundaries
-      // prevents clicks, but the body holds at NOTE_GAIN_AMP.
-      osc.type = 'sine';
+      // Exercise note: triangle wave (v22 polish — was sine), no ADSR.
+      // Triangle has a touch of odd harmonics that gives the note a
+      // warm, sax-like presence on built-in speakers. The body holds
+      // at NOTE_GAIN_AMP with a NOTE_RAMP_SEC ramp at the boundaries
+      // to suppress clicks.
+      osc.type = 'triangle';
       osc.frequency.value = hz;
       gain.gain.setValueAtTime(0, startAt);
       gain.gain.linearRampToValueAtTime(NOTE_GAIN_AMP, startAt + NOTE_RAMP_SEC);
@@ -459,6 +651,10 @@
     stop: stop,
     setTempo: setTempo,
     setMetronome: setMetronome,
+    setMetroConfig: setMetroConfig,
+    startMetronome: startMetronome,
+    stopMetronome: stopMetronome,
+    isMetronomeRunning: isMetronomeRunning,
     dispose: dispose,
     // Diagnostic
     testSound: testSound,

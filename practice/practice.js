@@ -1219,6 +1219,9 @@
     const tempoLbl = document.getElementById('playback-tempo-label');
     const metroBtn = document.getElementById('btn-playback-metronome');
     const statusEl = document.getElementById('playback-status');
+    const beatIndicator = document.getElementById('beat-indicator');
+    const metroTimeSigSel = document.getElementById('metro-timesig');
+    const metroSubSel = document.getElementById('metro-subdivision');
     if (!playBtn || !stopBtn) return;
 
     function setStatus(text, cls) {
@@ -1226,6 +1229,41 @@
       statusEl.textContent = text;
       statusEl.className = 'playback-status' + (cls ? ' ' + cls : '');
     }
+
+    // Flash the small beat indicator next to the Metronome button.
+    // v22: visual feedback so the user can see (not just hear) each
+    // metronome tick. We briefly add a class then remove it after the
+    // animation. Using a class instead of inline styles keeps the
+    // easing/colors in CSS where they're easy to tweak.
+    let beatFlashTimer = null;
+    function flashBeatIndicator(beat) {
+      if (!beatIndicator || !beat) return;
+      const cls = beat.isSubdivision ? 'pulse-sub'
+        : beat.isDown ? 'pulse-down'
+        : 'pulse-beat';
+      beatIndicator.classList.remove('pulse-down', 'pulse-beat', 'pulse-sub');
+      // Force reflow so the class re-add triggers the CSS transition
+      // (otherwise back-to-back flashes on the same element don't animate).
+      void beatIndicator.offsetWidth;
+      beatIndicator.classList.add(cls);
+      if (beatFlashTimer) clearTimeout(beatFlashTimer);
+      beatFlashTimer = setTimeout(() => {
+        beatIndicator.classList.remove('pulse-down', 'pulse-beat', 'pulse-sub');
+      }, 80);
+    }
+
+    // Push the current time-sig/subdivision values from the dropdowns
+    // into the engine. Idempotent; safe to call on every change.
+    function pushMetroConfig() {
+      const eng = window.playbackEngine;
+      if (!eng || typeof eng.setMetroConfig !== 'function') return;
+      eng.setMetroConfig({
+        timeSig: metroTimeSigSel ? metroTimeSigSel.value : '4/4',
+        subdivision: metroSubSel ? metroSubSel.value : 'off',
+      });
+    }
+    if (metroTimeSigSel) metroTimeSigSel.addEventListener('change', pushMetroConfig);
+    if (metroSubSel) metroSubSel.addEventListener('change', pushMetroConfig);
 
     function effectiveBpm() {
       const base = (state.currentScore && state.currentScore.bpm) || 120;
@@ -1267,8 +1305,21 @@
       eng.init();
       eng.setNotes(state.currentScore.notes, (state.currentScore.bpm || 120));
       eng.setTempo(effectiveBpm());
+      // Stop the standalone metronome if it's running, so we don't
+      // layer two click tracks. (The standalone and exercise share the
+      // same Tone.Transport.)
+      if (typeof eng.stopMetronome === 'function' && eng.isMetronomeRunning && eng.isMetronomeRunning()) {
+        try { eng.stopMetronome(); } catch (e) {}
+        // updateStandaloneUi lives in the wiring scope below; if it's
+        // not in scope here, the UI button state is harmless either way.
+        if (typeof updateStandaloneUi === 'function') updateStandaloneUi(false);
+      }
+      // Push the latest metronome config so this play() schedules
+      // clicks with the dropdowns' current time-sig/subdivision.
+      pushMetroConfig();
       const started = eng.play({
         onNote: (n) => highlightNote(n, true),
+        onBeat: (beat) => flashBeatIndicator(beat),
         onEnd:  () => {
           playBtn.disabled = false;
           stopBtn.disabled = true;
@@ -1332,9 +1383,117 @@
         metroBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
         const eng = window.playbackEngine;
         if (eng) eng.setMetronome(on);
+        // Mutually exclusive with the standalone metronome: turning on
+        // the in-exercise metronome stops the standalone one, and vice
+        // versa, so the user doesn't get two click tracks layered.
+        if (on && eng && typeof eng.stopMetronome === 'function' && eng.isMetronomeRunning && eng.isMetronomeRunning()) {
+          eng.stopMetronome();
+          updateStandaloneUi(false);
+        }
       });
       metroBtn.setAttribute('aria-pressed', 'false');
     }
+
+    // ---- Standalone metronome (free-running) ----
+    // v22. Lives in the side panel. Independent of any exercise — click
+    // Start and the click track begins at the configured BPM, with the
+    // chosen time sig + subdivision. Stops the in-exercise metronome
+    // (and exercise playback) when started, for the same exclusivity
+    // reason as above.
+    const standaloneStartBtn = document.getElementById('btn-standalone-start');
+    const standaloneStopBtn  = document.getElementById('btn-standalone-stop');
+    const standaloneBpmInp   = document.getElementById('standalone-bpm');
+    const standaloneTimeSel  = document.getElementById('standalone-timesig');
+    const standaloneSubSel   = document.getElementById('standalone-subdivision');
+    const standaloneVolInp   = document.getElementById('standalone-volume');
+    const standaloneInd      = document.getElementById('standalone-beat-indicator');
+    const standaloneNum      = document.getElementById('standalone-beat-num');
+    const standaloneSubLbl   = document.getElementById('standalone-beat-sub');
+
+    function updateStandaloneUi(running) {
+      if (standaloneStartBtn) standaloneStartBtn.disabled = !!running;
+      if (standaloneStopBtn) standaloneStopBtn.disabled = !running;
+    }
+
+    let standaloneFlashTimer = null;
+    function flashStandaloneIndicator(beat) {
+      if (!standaloneInd || !beat) return;
+      const cls = beat.isSubdivision ? 'pulse-sub'
+        : beat.isDown ? 'pulse-down'
+        : 'pulse-beat';
+      standaloneInd.classList.remove('pulse-down', 'pulse-beat', 'pulse-sub');
+      void standaloneInd.offsetWidth; // restart CSS transition
+      standaloneInd.classList.add(cls);
+      if (standaloneNum) {
+        // Display the beat number modulo the time sig for readability
+        const beatsPerBar = { '4/4': 4, '3/4': 3, '2/4': 2, '6/8': 6 }[beat.timeSig || '4/4'] || 4;
+        standaloneNum.textContent = String((beat.beat % beatsPerBar) + 1);
+      }
+      if (standaloneSubLbl) {
+        if (beat.isSubdivision) {
+          standaloneSubLbl.textContent = 'sub';
+        } else if (beat.isDown) {
+          standaloneSubLbl.textContent = 'downbeat';
+        } else {
+          standaloneSubLbl.textContent = '';
+        }
+      }
+      if (standaloneFlashTimer) clearTimeout(standaloneFlashTimer);
+      standaloneFlashTimer = setTimeout(() => {
+        standaloneInd.classList.remove('pulse-down', 'pulse-beat', 'pulse-sub');
+      }, 110);
+    }
+
+    function readStandaloneConfig() {
+      const bpm = standaloneBpmInp ? (parseInt(standaloneBpmInp.value, 10) || 100) : 100;
+      const timeSig = standaloneTimeSel ? standaloneTimeSel.value : '4/4';
+      const subdivision = standaloneSubSel ? standaloneSubSel.value : 'off';
+      const volume = standaloneVolInp ? (parseInt(standaloneVolInp.value, 10) / 100) : 0.6;
+      return { bpm, timeSig, subdivision, volume };
+    }
+
+    async function startStandaloneMetronome() {
+      const eng = window.playbackEngine;
+      if (!eng || typeof eng.startMetronome !== 'function') return;
+      // Make sure the AudioContext is running (browser autoplay policy
+      // requires a user gesture — this click is the gesture).
+      const ToneNs = window.Tone;
+      if (ToneNs && ToneNs.context && ToneNs.context.state === 'suspended') {
+        try { await ToneNs.start(); } catch (e) {}
+      }
+      // Stop exercise playback and the in-exercise metronome so we
+      // don't double up.
+      try { eng.stop(); } catch (e) {}
+      if (metroBtn && metroBtn.classList.contains('active')) {
+        metroBtn.classList.remove('active');
+        metroBtn.setAttribute('aria-pressed', 'false');
+        try { eng.setMetronome(false); } catch (e) {}
+      }
+      const cfg = readStandaloneConfig();
+      const ok = eng.startMetronome({
+        bpm: cfg.bpm,
+        timeSig: cfg.timeSig,
+        subdivision: cfg.subdivision,
+        volume: cfg.volume,
+        onBeat: (beat) => {
+          // Stash the time sig on the beat payload so flashStandaloneIndicator
+          // can compute the display number.
+          beat.timeSig = cfg.timeSig;
+          flashStandaloneIndicator(beat);
+        },
+      });
+      if (ok) updateStandaloneUi(true);
+    }
+
+    function stopStandaloneMetronome() {
+      const eng = window.playbackEngine;
+      if (!eng) return;
+      try { eng.stopMetronome(); } catch (e) {}
+      updateStandaloneUi(false);
+    }
+
+    if (standaloneStartBtn) standaloneStartBtn.addEventListener('click', startStandaloneMetronome);
+    if (standaloneStopBtn)  standaloneStopBtn.addEventListener('click', stopStandaloneMetronome);
   }
 
   // Map every rendered <g class="note"> in the SVG to the beat position

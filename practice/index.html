@@ -114,6 +114,23 @@
                 <span id="playback-tempo-label" class="tempo-display">100%</span>
               </label>
               <button id="btn-playback-metronome" class="btn btn-ghost btn-sm" title="Toggle metronome click" aria-pressed="false">🥁 Metronome</button>
+              <label class="metro-inline-label">Time
+                <select id="metro-timesig" class="input input-sm" title="Time signature for the metronome">
+                  <option value="4/4">4/4</option>
+                  <option value="3/4">3/4</option>
+                  <option value="2/4">2/4</option>
+                  <option value="6/8">6/8</option>
+                </select>
+              </label>
+              <label class="metro-inline-label">Sub
+                <select id="metro-subdivision" class="input input-sm" title="Subdivision clicks per beat">
+                  <option value="off">off</option>
+                  <option value="8ths">8ths</option>
+                  <option value="triplets">triplets</option>
+                  <option value="16ths">16ths</option>
+                </select>
+              </label>
+              <span id="beat-indicator" class="beat-indicator" aria-hidden="true"></span>
               <span id="playback-status" class="playback-status">ready</span>
             </div>
           </div>
@@ -193,6 +210,45 @@
           </details>
         </div>
 
+        <div class="card standalone-metronome-card">
+          <details class="side-details" open>
+            <summary><h3>🥁 Metronome</h3></summary>
+            <p class="hint">Free-running click track — no exercise needed. Good for warmup or working on a single passage.</p>
+            <div class="standalone-metro-body">
+              <div id="standalone-beat-indicator" class="standalone-beat-indicator" aria-hidden="true">
+                <span class="standalone-beat-num" id="standalone-beat-num">—</span>
+                <span class="standalone-beat-sub" id="standalone-beat-sub"></span>
+              </div>
+              <div class="standalone-metro-controls">
+                <label>BPM
+                  <input id="standalone-bpm" type="number" min="40" max="240" value="100" class="input input-sm">
+                </label>
+                <label>Time
+                  <select id="standalone-timesig" class="input input-sm">
+                    <option value="4/4">4/4</option>
+                    <option value="3/4">3/4</option>
+                    <option value="2/4">2/4</option>
+                    <option value="6/8">6/8</option>
+                  </select>
+                </label>
+                <label>Sub
+                  <select id="standalone-subdivision" class="input input-sm">
+                    <option value="off">off</option>
+                    <option value="8ths">8ths</option>
+                    <option value="triplets">triplets</option>
+                    <option value="16ths">16ths</option>
+                  </select>
+                </label>
+                <label>Vol
+                  <input id="standalone-volume" type="range" min="0" max="100" value="60" class="tempo-slider">
+                </label>
+                <button id="btn-standalone-start" class="btn btn-primary">▶ Start</button>
+                <button id="btn-standalone-stop" class="btn btn-secondary" disabled>■ Stop</button>
+              </div>
+            </div>
+          </details>
+        </div>
+
         <div class="card">
           <details class="side-details">
             <summary><h3>Recent Practice</h3></summary>
@@ -214,13 +270,13 @@
     </div>
   </main>
 
-  <script src="vendor/verovio-toolkit.js?v=21"></script>
-  <script src="vendor/Tone.js?v=21"></script>
-  <script src="../range-modal.js?v=21"></script>
-  <script src="takes-store.js?v=21"></script>
-  <script src="../etudes-store.js?v=21"></script>
-  <script src="playback-engine.js?v=21"></script>
-  <script src="practice.js?v=21"></script>
+  <script src="vendor/verovio-toolkit.js?v=22"></script>
+  <script src="vendor/Tone.js?v=22"></script>
+  <script src="../range-modal.js?v=22"></script>
+  <script src="takes-store.js?v=22"></script>
+  <script src="../etudes-store.js?v=22"></script>
+  <script src="playback-engine.js?v=22"></script>
+  <script src="practice.js?v=22"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
     <div class="fullpage-toolbar">
