@@ -125,10 +125,59 @@
     return { bpm, notes, keyFifths };
   }
 
+  // v28: rewrite getNoteDuration to compute from <type> + <dot> +
+  // <time-modification> rather than <duration>/divisions. Reason:
+  // encoders (Audiveris, music21) round the <duration> field to
+  // integer divisions, so a 5:4 quintuplet of 16th notes (each
+  // 0.2 beat = 2.4 divisions in divisions=12) would land at 2 or 3
+  // divisions — 0.167 or 0.25 beat — off by up to 1/divisions. The
+  // type-based approach is independent of divisions and handles ANY
+  // tuplet ratio: 3:2 (triplet), 5:4 (quintuplet), 6:4 (sextuplet),
+  // 7:8 (septuplet), 11:8 (irrational), whatever. The trade-off is
+  // losing the <duration> field's encoding of grace-note duration
+  // (always 0) and tie-adjusted duration (handled separately at the
+  // v24 level). For pitched notes and rests, <type> is required by
+  // the MusicXML spec so this is always available.
+  //
+  // Beats-per-type table is the standard whole-note system: a whole
+  // note = 4 beats, then halve for half, quarter, eighth, etc.
+  // A <dot> extends the duration by half each time (so a dotted
+  // quarter = 1.5 beats, double-dotted = 1.75).
+  const TYPE_BEATS = {
+    'whole': 4, 'half': 2, 'quarter': 1, 'eighth': 0.5, '16th': 0.25,
+    '32nd': 0.125, '64th': 0.0625, '128th': 0.03125,
+    'breve': 8, 'long': 16,
+  };
   function getNoteDuration(note, divisions) {
-    const dur = note.querySelector('duration')?.textContent;
-    if (!dur) return 1; // default to quarter
-    return parseFloat(dur) / divisions;
+    const typeEl = note.querySelector('type');
+    if (!typeEl) {
+      // No <type> (e.g. grace notes): fall back to <duration>/divisions.
+      const dur = note.querySelector('duration')?.textContent;
+      return dur ? parseFloat(dur) / divisions : 1;
+    }
+    const base = TYPE_BEATS[typeEl.textContent];
+    if (base == null) {
+      // Unknown type: fall back to <duration>/divisions.
+      const dur = note.querySelector('duration')?.textContent;
+      return dur ? parseFloat(dur) / divisions : 1;
+    }
+    let beats = base;
+    // Dots: each <dot/> multiplies by 1.5. MusicXML allows up to
+    // 4 dots in practice (a double-dotted note is 1.75x, triple is
+    // 1.875x, etc.).
+    const dotCount = note.querySelectorAll('dot').length;
+    for (let i = 0; i < dotCount; i++) beats *= 1.5;
+    // Tuplet: actual = nominal * (normal-notes / actual-notes).
+    // Use <normal-notes>/<actual-notes> directly — don't need the
+    // <normal-type> child since we already have the nominal from
+    // the <type> above.
+    const tm = note.querySelector('time-modification');
+    if (tm) {
+      const an = parseInt(tm.querySelector('actual-notes')?.textContent || '1');
+      const nn = parseInt(tm.querySelector('normal-notes')?.textContent || '1');
+      if (an > 0 && nn > 0) beats = beats * nn / an;
+    }
+    return beats;
   }
 
   function stepToMidi(step, octave, alter) {
