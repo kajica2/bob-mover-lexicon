@@ -613,11 +613,47 @@ def parse_chord(token):
     return (root, alter, kind, bass_step, bass_alter, kind_modifier)
 
 
-def inject_chord_symbols(xml_string, exercise_id):
+def transpose_chord_root(root_step, root_alter, semitones):
+    """Transpose a chord root by N semitones. Returns the new
+    (root_step, root_alter) using sharp/flat preference that matches
+    the rest of the Bob Mover lexicon (sharp preferred for chromatic
+    motion in C; flat preferred for keys with flats).
+    """
+    # MIDI: C=0, C#=1, D=2, D#=3, E=4, F=5, F#=6, G=7, G#=8, A=9, A#=10, B=11.
+    # Accept input root as letter A-G; the alter (-1 = flat, 0 = natural,
+    # 1 = sharp) determines the actual pitch class.
+    note_to_midi = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+    base = root_step[0]
+    if base not in note_to_midi:
+        return (root_step, root_alter)
+    midi = note_to_midi[base] + (root_alter or 0)
+    new_midi = (midi + semitones) % 12
+    if new_midi in note_to_midi.values():
+        for step, val in note_to_midi.items():
+            if val == new_midi:
+                return (step, 0)
+    # Sharp spellings
+    sharp_spells = {
+        1: ('C', 1), 3: ('D', 1), 6: ('F', 1), 8: ('G', 1), 10: ('A', 1),
+    }
+    if new_midi in sharp_spells:
+        return sharp_spells[new_midi]
+    # Flat spellings (for completeness)
+    flat_spells = {
+        1: ('D', -1), 3: ('E', -1), 6: ('G', -1), 8: ('A', -1), 10: ('B', -1),
+    }
+    return flat_spells.get(new_midi, (root_step, root_alter))
+
+
+def inject_chord_symbols(xml_string, exercise_id, transpose_semitones=0):
     """If exercise_id has chord labels in chords.json, inject a
     <harmony> at the start of each of the first N measures so Verovio
     renders the chord symbol above the staff. Exercises without an
     entry pass through unchanged.
+
+    When transpose_semitones != 0, the chord roots are also transposed
+    by N semitones so the harmony stays in lockstep with the transposed
+    pitches.
     """
     if not xml_string:
         return xml_string
@@ -626,13 +662,38 @@ def inject_chord_symbols(xml_string, exercise_id):
     if not chords:
         return xml_string
 
+    # Pre-transpose chord roots so we don't have to redo it per measure
+    transposed_chords = []
+    for token in chords:
+        parsed = parse_chord(token)
+        if not parsed:
+            transposed_chords.append(None)
+            continue
+        root, alter, kind, bass_step, bass_alter, modifier = parsed
+        # Transpose root
+        if transpose_semitones:
+            new_root, new_alter = transpose_chord_root(root, alter, transpose_semitones)
+            # Transpose bass if present (slashes /Cmaj7/E -> /G/B)
+            if bass_step is not None:
+                new_bass_step, new_bass_alter = transpose_chord_root(
+                    bass_step, bass_alter or 0, transpose_semitones
+                )
+            else:
+                new_bass_step, new_bass_alter = None, None
+        else:
+            new_root, new_alter = root, alter
+            new_bass_step, new_bass_alter = bass_step, bass_alter
+        transposed_chords.append(
+            (new_root, new_alter, kind, new_bass_step, new_bass_alter, modifier)
+        )
+
     harmony_idx = [0]
 
     def inject(m):
         idx = harmony_idx[0]
-        if idx >= len(chords):
+        if idx >= len(transposed_chords):
             return m.group(0)
-        parsed = parse_chord(chords[idx])
+        parsed = transposed_chords[idx]
         harmony_idx[0] = idx + 1
         if not parsed:
             return m.group(0)
@@ -1046,9 +1107,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 xml = fill_empty_measures(xml)
             # Inject chord symbols from chords.json so cyclic
             # exercises show the chord progression above each measure.
+            # The chord roots also follow the user's transpose choice
+            # so the harmony stays in lockstep with the transposed
+            # pitches.
             if xml is not None:
                 try:
-                    xml = inject_chord_symbols(xml, eid)
+                    xml = inject_chord_symbols(xml, eid, semitones)
                 except Exception as e:
                     # Chord injection is best-effort; never fail a
                     # served exercise because of bad chord data.
