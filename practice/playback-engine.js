@@ -195,11 +195,15 @@
       // (the synth triggers a release on the prior voice before the new
       // attack, so two notes never overlap).
       const durStr = formatBeatDuration(note.duration);
+      // Capture the callback in a local so the scheduled closure has a
+      // stable reference even if the user clicks Stop mid-playback (which
+      // nulls the module-level onNoteCb).
+      const onNote = onNoteCb;
       const id = T.Transport.scheduleOnce((t) => {
         const hz = T.Frequency(note.midi, 'midi').toFrequency();
         try { synth.triggerAttackRelease(durStr, t, hz); } catch (e) {}
-        if (onNoteCb) {
-          try { T.Draw.schedule(() => onNoteCb(note), t); } catch (e) { try { onNoteCb(note); } catch (_) {} }
+        if (onNote) {
+          try { T.Draw.schedule(() => onNote(note), t); } catch (e) {}
         }
       }, timeStr);
       scheduledIds.push(id);
@@ -212,12 +216,13 @@
       for (let b = 0; b < totalBeats; b++) {
         const isDown = (b % 4) === 0;
         const timeStr = formatBeatTime(b);
+        const onBeat = onBeatCb;
         const id = T.Transport.scheduleOnce((t) => {
           const hz = isDown ? METRO_DOWN_HZ : METRO_BEAT_HZ;
           const voice = isDown ? metroDown : metroUp;
           try { voice.triggerAttackRelease(METRO_DUR, t, hz); } catch (e) {}
-          if (onBeatCb) {
-            try { T.Draw.schedule(() => onBeatCb(b), t); } catch (e) { try { onBeatCb(b); } catch (_) {} }
+          if (onBeat) {
+            try { T.Draw.schedule(() => onBeat(b), t); } catch (e) {}
           }
         }, timeStr);
         scheduledIds.push(id);
