@@ -29,9 +29,6 @@
     random: {
       lastPreview: null,      // [{id, semitones}, ...]
     },
-    pattern: {
-      lastPreview: null,
-    },
     savedFilter: '',           // search text for the saved-etudes list
   };
 
@@ -45,7 +42,6 @@
       renderComposer();
       wireComposerControls();
       wireRandomControls();
-      wirePatternLibrary();
       wireEtudesActions();
       refreshSavedEtudes();
     });
@@ -501,23 +497,6 @@
     document.getElementById('random-generate').addEventListener('click', generateRandomPreview);
   }
 
-  // ---------- Pattern Library mode ----------
-  // Constraint-based generator: deterministic, no ML. Uses the user's saved
-  // playing range (from window.getEffectiveRange) to keep generated notes
-  // within what's playable for them.
-  function populatePatternControls() {
-    var keySel = document.getElementById('pattern-key');
-    keySel.innerHTML = '';
-    window.patternGenerator.KEYS.forEach(function (k) {
-      var opt = document.createElement('option');
-      opt.value = k;
-      opt.textContent = k;
-      keySel.appendChild(opt);
-    });
-    // Sensible default: pick a key the user might already be playing in
-    if (!keySel.value) keySel.value = 'F';
-  }
-
   // Pull the user's union-of-all-instruments range from localStorage.
   // If the user has set a per-instrument range on any instrument, we
   // take the minimum lowMidi and maximum highMidi across all stored
@@ -553,251 +532,6 @@
       }
     } catch (e) {}
     return { lowMidi: 56, highMidi: 76 }; // Ab2..E5 default
-  }
-
-  // Backward-compatible alias used by the Pattern Library knob change
-  // handler and the original getPatternRange caller.
-  function getPatternRange() {
-    return getEtudesRange();
-  }
-
-  function generatePatternPreview(isReroll) {
-    var opts = {
-      key: document.getElementById('pattern-key').value,
-      pattern: document.getElementById('pattern-rhythm').value,
-      difficulty: document.getElementById('pattern-difficulty').value,
-      bars: parseInt(document.getElementById('pattern-bars').value, 10),
-    };
-    var range = getPatternRange();
-    opts.lowMidi = range.lowMidi;
-    opts.highMidi = range.highMidi;
-    try {
-      var result = window.patternGenerator.generate(opts);
-    } catch (e) {
-      console.error('pattern generate failed', e);
-      toast('Could not generate: ' + e.message, true);
-      return;
-    }
-    state.pattern = state.pattern || {};
-    state.pattern.lastPreview = {
-      opts: opts,
-      musicxml: result.musicxml,
-      noteCount: result.noteCount,
-      range: result.range,
-      wasReroll: !!isReroll,
-    };
-    renderPatternPreview();
-  }
-
-  function renderPatternPreview() {
-    var box = document.getElementById('pattern-preview');
-    var prev = state.pattern && state.pattern.lastPreview;
-    if (!prev) {
-      box.classList.remove('visible');
-      return;
-    }
-    box.classList.add('visible');
-    box.innerHTML = '';
-    var h = document.createElement('h4');
-    h.textContent = 'Preview · ' + prev.opts.key + ' · ' +
-      prev.opts.pattern + ' · ' + prev.opts.difficulty + ' · ' +
-      prev.opts.bars + ' bar' + (prev.opts.bars > 1 ? 's' : '');
-    box.appendChild(h);
-
-    var meta = document.createElement('p');
-    meta.className = 'muted';
-    meta.style.margin = '0 0 8px';
-    meta.innerHTML = '<strong>' + prev.noteCount + '</strong> notes · range MIDI ' +
-      prev.range.low + '–' + prev.range.high;
-    box.appendChild(meta);
-
-    // Inline Verovio preview. The 11MB toolkit is loaded on first
-    // generation only, then cached. The SVG goes into a wrapper that
-    // scrolls horizontally for long patterns.
-    var previewWrap = document.createElement('div');
-    previewWrap.className = 'pattern-preview-svg';
-    var previewLoading = document.createElement('p');
-    previewLoading.className = 'muted';
-    previewLoading.textContent = 'Loading notation engine…';
-    previewWrap.appendChild(previewLoading);
-    box.appendChild(previewWrap);
-    loadVerovio().then(function (v) {
-      try {
-        var tk = new v.toolkit();
-        tk.setOptions({
-          scale: 30,
-          breaks: 'auto',
-          adjustPageHeight: true,
-          justifyVertically: false,
-          spacingSystem: 4,
-          spacingStaff: 2,
-          pageWidth: 1100,
-          pageHeight: 600,
-        });
-        tk.loadData(prev.musicxml);
-        var svg = tk.renderToSVG(1, {});
-        previewWrap.innerHTML = svg;
-      } catch (e) {
-        previewWrap.innerHTML = '<p class="muted">Could not render preview: ' +
-          (e && e.message ? e.message : e) + '</p>';
-      }
-    }).catch(function (e) {
-      previewWrap.innerHTML = '<p class="muted">Could not load notation engine.</p>';
-    });
-
-    var actions = document.createElement('div');
-    actions.className = 'preview-actions';
-    var nameInput = document.createElement('input');
-    nameInput.className = 'input';
-    nameInput.placeholder = 'Name this pattern etude';
-    var defaultName = prev.opts.key + ' ' + prev.opts.pattern +
-      ' (' + prev.opts.bars + ' bar' + (prev.opts.bars > 1 ? 's' : '') + ')';
-    // Preserve the user's typed name across re-rolls. On a fresh
-    // generation (state.pattern.typedName not set), default the input to
-    // the auto-generated name. On a re-roll, keep whatever the user
-    // has already typed so they don't lose their work.
-    if (prev.wasReroll) {
-      nameInput.value = state.pattern.typedName || defaultName;
-    } else {
-      nameInput.value = defaultName;
-      state.pattern.typedName = defaultName;
-    }
-    nameInput.addEventListener('input', function () {
-      state.pattern.typedName = nameInput.value;
-    });
-    actions.appendChild(nameInput);
-
-    var saveBtn = document.createElement('button');
-    saveBtn.className = 'btn btn-primary';
-    saveBtn.textContent = 'Save';
-    saveBtn.addEventListener('click', function () {
-      savePatternEtude(nameInput.value || defaultName);
-    });
-    actions.appendChild(saveBtn);
-
-    var regenBtn = document.createElement('button');
-    regenBtn.className = 'btn btn-ghost';
-    regenBtn.textContent = 'Re-roll';
-    regenBtn.addEventListener('click', function () { generatePatternPreview(true); });
-    actions.appendChild(regenBtn);
-
-    box.appendChild(actions);
-  }
-
-  async function savePatternEtude(name) {
-    var prev = state.pattern && state.pattern.lastPreview;
-    if (!prev) {
-      toast('Click Generate first.', true);
-      return;
-    }
-    var uniqueName = await uniquifyEtudeName(name);
-    // Defensive clamp in case the user's saved range has been tightened
-    // since the preview was generated.
-    try {
-      var rr = getEtudesRange();
-      var clamped = window.etudesStitch.clampToRange(prev.musicxml, rr.lowMidi, rr.highMidi);
-      prev.musicxml = clamped.xml;
-      if (clamped.moved > 0) {
-        toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
-      }
-    } catch (e) { /* fall through with original XML */ }
-    var id = window.etudesStore.newId();
-    try {
-      await window.etudesStore.saveEtude({
-        id: id,
-        name: uniqueName,
-        // Pattern-generated etudes have no exerciseIds. The etude is its
-        // own thing; users navigate to it via the saved-etudes list.
-        exerciseIds: [],
-        semitones: [],
-        mode: 'pattern',
-        source: 'pattern',
-        musicxml: prev.musicxml,
-        noteCount: prev.noteCount,
-      });
-    } catch (e) {
-      console.error('savePatternEtude failed', e);
-      toast('Could not save: ' + e.message, true);
-      return;
-    }
-    toast('Saved "' + uniqueName + '" — opening Practice…');
-    setTimeout(function () {
-      window.location.href = '/practice/?id=' + encodeURIComponent(id);
-    }, 600);
-  }
-
-  // Ensure an etude name is unique in the user's saved-etudes list.
-  // If `name` already exists, append " (2)", " (3)", etc. Returns the
-  // first unused variant. Used by all three save paths (Composer /
-  // Random / Pattern) so the user can save rapidly without thinking
-  // about naming, and gets sensibly-suffixed copies when they do.
-  async function uniquifyEtudeName(name) {
-    var all = [];
-    try { all = await window.etudesStore.listEtudes(); }
-    catch (e) { return name; }
-    var taken = {};
-    all.forEach(function (e) { taken[e.name] = true; });
-    if (!taken[name]) return name;
-    var stripped = name.replace(/ \(\d+\)$/, '');
-    var i = 2;
-    while (taken[stripped + ' (' + i + ')']) i++;
-    return stripped + ' (' + i + ')';
-  }
-
-  function wirePatternLibrary() {
-    populatePatternControls();
-    updatePatternEstimate();
-    document.getElementById('pattern-generate').addEventListener('click', generatePatternPreview);
-    // Live-update the estimate on any knob change.
-    ['pattern-key', 'pattern-rhythm', 'pattern-difficulty', 'pattern-bars'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (el) el.addEventListener('change', updatePatternEstimate);
-    });
-  }
-
-  // Compute and display an estimate of the upcoming pattern: name, range,
-  // and approx note count. No MusicXML is generated — just knobs in, text out.
-  // Saves the user a Generate click when their settings would produce
-  // something they don't want (e.g. notes outside their range).
-  function updatePatternEstimate() {
-    var box = document.getElementById('pattern-estimate');
-    if (!box) return;
-    var key = document.getElementById('pattern-key').value;
-    var pattern = document.getElementById('pattern-rhythm').value;
-    var difficulty = document.getElementById('pattern-difficulty').value;
-    var bars = parseInt(document.getElementById('pattern-bars').value, 10);
-    var range = getPatternRange();
-    var center = Math.round((range.lowMidi + range.highMidi) / 2);
-    var factorMap = { beginner: 0.5, intermediate: 0.75, advanced: 1.0 };
-    var factor = factorMap[difficulty] || 0.75;
-    var halfRange = Math.round((range.highMidi - range.lowMidi) * factor / 2);
-    var adjLow = Math.max(range.lowMidi, center - halfRange);
-    var adjHigh = Math.min(range.highMidi, center + halfRange);
-    // Approximate note counts: 8ths=8/bar, triplets=12/bar, 16ths=16/bar, mix=avg
-    var perBar = pattern === 'sixteenths' ? 16
-               : pattern === 'triplets'    ? 12
-               : pattern === 'chromatic'   ? 8
-               : /* mix */                     12;
-    var approxNotes = perBar * bars;
-    var humanRange = midiToNoteRange(adjLow, adjHigh);
-    box.innerHTML =
-      'Will generate: <strong>' + key + ' ' + pattern + ' · ' + difficulty +
-      ' · ' + bars + ' bar' + (bars > 1 ? 's' : '') + '</strong>' +
-      ' — ~<strong>' + approxNotes + '</strong> notes,' +
-      ' range <strong>' + humanRange + '</strong>' +
-      ' (MIDI ' + adjLow + '–' + adjHigh + ')';
-  }
-
-  // Format a MIDI range as a human-friendly note name span, e.g.
-  // "F3 – D5". Uses sharp spellings.
-  function midiToNoteRange(low, high) {
-    function n(m) {
-      var oct = Math.floor(m / 12) - 1;
-      var pc = ((m % 12) + 12) % 12;
-      var TABLE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-      return TABLE[pc] + oct;
-    }
-    return n(low) + ' – ' + n(high);
   }
 
   function generateRandomPreview(isReroll) {
@@ -1084,6 +818,24 @@
     visible.forEach(function (et) {
       list.appendChild(makeEtudeCard(et));
     });
+  }
+
+  // Ensure an etude name is unique in the user's saved-etudes list.
+  // If `name` already exists, append " (2)", " (3)", etc. Returns the
+  // first unused variant. Used by the Composer and Random save flows
+  // so the user can save rapidly without thinking about naming, and
+  // gets sensibly-suffixed copies when they do.
+  async function uniquifyEtudeName(name) {
+    var all = [];
+    try { all = await window.etudesStore.listEtudes(); }
+    catch (e) { return name; }
+    var taken = {};
+    all.forEach(function (e) { taken[e.name] = true; });
+    if (!taken[name]) return name;
+    var stripped = name.replace(/ \(\d+\)$/, '');
+    var i = 2;
+    while (taken[stripped + ' (' + i + ')']) i++;
+    return stripped + ' (' + i + ')';
   }
 
   // Wire the saved-etudes search filter input. Called once at boot.

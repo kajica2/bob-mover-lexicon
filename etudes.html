@@ -38,7 +38,6 @@
       <div class="mode-selector" role="tablist">
         <button class="mode-tab active" data-mode="composer" role="tab" aria-selected="true">Composer</button>
         <button class="mode-tab" data-mode="random" role="tab" aria-selected="false">Generator</button>
-        <button class="mode-tab" data-mode="pattern" role="tab" aria-selected="false">Pattern Library</button>
       </div>
 
       <!-- COMPOSER MODE -->
@@ -119,58 +118,6 @@
         </section>
       </div>
 
-      <!-- PATTERN LIBRARY MODE -->
-      <div id="mode-pattern" class="mode-pane">
-        <section class="random-controls panel">
-          <p class="muted" style="margin-top:0">
-            Constraint-based generator: deterministic, no ML. Pick a key, pattern, and difficulty; range follows your saved playing range.
-          </p>
-          <div class="composer-row">
-            <label class="composer-field">
-              <span class="label">Key</span>
-              <select id="pattern-key" class="input"></select>
-            </label>
-            <label class="composer-field">
-              <span class="label">Pattern</span>
-              <select id="pattern-rhythm" class="input">
-                <option value="chromatic" selected>Chromatic 8ths</option>
-                <option value="triplets">Triplet 8ths</option>
-                <option value="sixteenths">16th-note runs</option>
-                <option value="mix">Mix of all three</option>
-              </select>
-            </label>
-            <label class="composer-field">
-              <span class="label">Difficulty</span>
-              <select id="pattern-difficulty" class="input">
-                <option value="beginner">Beginner (narrow range, no leaps)</option>
-                <option value="intermediate" selected>Intermediate</option>
-                <option value="advanced">Advanced (full range, leaps)</option>
-              </select>
-            </label>
-            <label class="composer-field">
-              <span class="label">Bars</span>
-              <select id="pattern-bars" class="input">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4" selected>4</option>
-                <option value="6">6</option>
-                <option value="8">8</option>
-              </select>
-            </label>
-          </div>
-          <div class="composer-row">
-            <button id="pattern-generate" class="btn btn-primary">Generate</button>
-            <span class="muted">Preview below — save once you like it.</span>
-          </div>
-          <!-- Estimated output for the current settings. Live-updates
-               on any knob change so the user knows what range / note
-               density to expect before clicking Generate. -->
-          <div id="pattern-estimate" class="pattern-estimate muted"></div>
-          <div id="pattern-preview" class="random-preview"></div>
-        </section>
-      </div>
-
       <!-- SAVED ETUDES LIST -->
       <section class="saved-etudes panel">
         <div class="saved-etudes-header">
@@ -189,7 +136,6 @@
 
   <script src="etudes-store.js"></script>
   <script src="etudes-stitch.js"></script>
-  <script src="pattern-generator.js"></script>
   <script src="etudes.js"></script>
 </body>
 </html>

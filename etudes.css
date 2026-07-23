@@ -317,9 +317,11 @@
   display: block;
 }
 
-/* Inline Verovio preview inside the pattern-preview box. Horizontal
- * scroll for long patterns; capped max-height to keep the page from
- * growing unbounded. */
+/* Inline Verovio preview inside the random-preview box (used by the
+ * Random mode composer of saved-etudes). The historical class name
+ * `.pattern-preview-svg` is preserved so Random-mode markup keeps
+ * working without a markup edit. Horizontal scroll for long patterns;
+ * capped max-height to keep the page from growing unbounded. */
 .pattern-preview-svg {
   margin-top: 8px;
   margin-bottom: 12px;
@@ -336,21 +338,6 @@
   height: auto;
 }
 
-/* Live estimate that shows what Generate *will* produce. Updates on any
- * knob change so the user can tweak settings before committing to a
- * full generation. */
-.pattern-estimate {
-  margin-top: 8px;
-  padding: 6px 10px;
-  background: rgba(80, 120, 200, 0.08);
-  border-left: 3px solid rgba(80, 120, 200, 0.4);
-  border-radius: 0 4px 4px 0;
-  font-size: 13px;
-  color: var(--ink-700, #4a4538);
-}
-.pattern-estimate strong {
-  color: var(--ink-900, #1a1815);
-}
 .random-preview h4 {
   margin: 0 0 8px;
   font-size: 14px;
