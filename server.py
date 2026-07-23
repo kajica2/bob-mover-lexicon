@@ -491,6 +491,210 @@ def fill_empty_measures(xml_string):
     )
 
 
+# ---------------------------------------------------------------------
+# Chord-symbol injection (server-side augmentation)
+# ---------------------------------------------------------------------
+#
+# The committed .mxl files contain pitches only — Audiveris dropped the
+# chord-name labels (G7alt, Cmaj7, etc.) that the source PDF prints
+# underneath each measure. Bob Mover exercises in Section 4 (cyclic
+# progressions) and parts of Section 1C / 3 rely heavily on these
+# labels; without them, practicing an exercise over its chord changes
+# requires the user to guess the harmony.
+#
+# We don't have a reliable OMR path that extracts chord labels from the
+# .mxl files, so we OCR the source PDF once (build-chords.py) and
+# store the result in chords.json. At serve time we inject <harmony>
+# elements at the start of each measure so Verovio renders chord
+# symbols above the staff.
+#
+# The injection is keyed by exerciseId; exercises with no entry in
+# chords.json are served unchanged.
+#
+# MusicXML <harmony> structure (MusicXML 1.7 style):
+#   <harmony>
+#     <root>
+#       <root-step>C</root-step>
+#       <root-alter>0</root-alter>            <!-- optional; 1=#, -1=b -->
+#     </root>
+#     <kind text="dominant">dominant</kind>   <!-- dominant, major,
+#                                                    minor-seventh, ... -->
+#     <bass>
+#       <bass-step>E</bass-step>              <!-- only if slash chord -->
+#     </bass>
+#   </harmony>
+#
+# The chord vocabulary used in the Bob Mover book is dominated by:
+#   major / major-seventh / major-sixth / minor-seventh / minor /
+#   dominant / dominant-ninth / dominant-13
+#   / half-diminished / diminished / suspended-fourth / suspended-second
+# Plus altered upper structures (G7alt, F7alt, C7#9, Bbmaj7#11).
+_CHORD_QUALITY_MAP = {
+    '':           ('major', ''),
+    'maj':        ('major', ''),
+    'maj7':       ('major-seventh', ''),
+    'maj9':       ('major-ninth', ''),
+    'maj6':       ('major-sixth', ''),
+    'maj13':      ('major-13th', ''),
+    'm':          ('minor', ''),
+    'min':        ('minor', ''),
+    'm7':         ('minor-seventh', ''),
+    'min7':       ('minor-seventh', ''),
+    'm9':         ('minor-ninth', ''),
+    'm11':        ('minor-11th', ''),
+    'm13':        ('minor-13th', ''),
+    '6':          ('major-sixth', ''),
+    '7':          ('dominant', ''),
+    '9':          ('dominant-ninth', ''),
+    '11':         ('dominant-11th', ''),
+    '13':         ('dominant-13th', ''),
+    'sus':        ('suspended-fourth', ''),
+    'sus2':       ('suspended-second', ''),
+    'sus4':       ('suspended-fourth', ''),
+    'dim':        ('diminished', ''),
+    'dim7':       ('diminished-seventh', ''),
+    'aug':        ('augmented', ''),
+    'alt':        ('dominant', 'alt'),
+    '7alt':       ('dominant', 'alt'),
+}
+
+
+def parse_chord(token):
+    """Parse a chord token like 'C7alt', 'Bbmaj9', 'F#m7', 'Db7#11'
+    into (root, alter, kind, bass_step, bass_alter, modifier).
+    Returns None if the token doesn't look like a chord.
+    """
+    import re
+    t = token.strip()
+    # Slash chord: split on /
+    bass_step = bass_alter = None
+    if '/' in t:
+        t, bass = t.split('/', 1)
+        bass = bass.strip()
+        m = re.match(r'^([A-G])([#b]?)(.*)$', bass)
+        if m:
+            bass_step, bass_alt_raw, _ = m.groups()
+            bass_alter = 1 if bass_alt_raw == '#' else (-1 if bass_alt_raw == 'b' else 0)
+        else:
+            return None
+
+    t = re.sub(r'^[\(\*]+', '', t).strip()
+    m = re.match(r'^([A-G])([#b]?)(.*)$', t)
+    if not m:
+        return None
+    root, alter_raw, suffix = m.groups()
+    alter = 1 if alter_raw == '#' else (-1 if alter_raw == 'b' else 0)
+    suffix = suffix.strip()
+
+    # Look up the suffix directly first (handles "maj7", "maj9", "m7",
+    # "min7", "alt", etc.). Only fall back to stripped forms if the
+    # full suffix isn't a known quality.
+    kind, kind_modifier = ('major', '')
+    if suffix in _CHORD_QUALITY_MAP:
+        kind, kind_modifier = _CHORD_QUALITY_MAP[suffix]
+    else:
+        # Try variants: strip 'maj' or 'min' to find the base quality.
+        # Strip extensions like #11, b9, #13, b13 first so that
+        # "7#11" -> "7" -> dominant.
+        base = re.sub(r'(#\d+|b\d+)$', '', suffix)
+        base = re.sub(r'^maj', '', base)
+        base = re.sub(r'^min', 'm', base)
+        if base in _CHORD_QUALITY_MAP:
+            kind, kind_modifier = _CHORD_QUALITY_MAP[base]
+        else:
+            # Unknown suffix (e.g. 'maj7#11', '7b13') — default to
+            # major triad and keep the full suffix as a custom label.
+            kind_modifier = suffix
+
+    altered = re.search(r'(#\d+|b\d+)', suffix)
+    if altered and altered.group(1) not in kind_modifier:
+        kind_modifier = (kind_modifier + ' ' + altered.group(1)).strip()
+
+    return (root, alter, kind, bass_step, bass_alter, kind_modifier)
+
+
+def inject_chord_symbols(xml_string, exercise_id):
+    """If exercise_id has chord labels in chords.json, inject a
+    <harmony> at the start of each of the first N measures so Verovio
+    renders the chord symbol above the staff. Exercises without an
+    entry pass through unchanged.
+    """
+    if not xml_string:
+        return xml_string
+    _load_chords()
+    chords = _CHORDS_DATA.get(exercise_id) or _CHORDS_DATA.get(str(exercise_id))
+    if not chords:
+        return xml_string
+
+    harmony_idx = [0]
+
+    def inject(m):
+        idx = harmony_idx[0]
+        if idx >= len(chords):
+            return m.group(0)
+        parsed = parse_chord(chords[idx])
+        harmony_idx[0] = idx + 1
+        if not parsed:
+            return m.group(0)
+        root, alter, kind, bass_step, bass_alter, modifier = parsed
+        alter_xml = f'                <root-alter>{alter}</root-alter>\n' if alter else ''
+        if modifier:
+            kind_xml = f'                <kind text="{modifier}">{kind}</kind>\n'
+        else:
+            kind_xml = f'                <kind>{kind}</kind>\n'
+        bass_xml = ''
+        if bass_step:
+            bass_alter_xml = (
+                f'                <bass-alter>{bass_alter}</bass-alter>\n'
+                if bass_alter else ''
+            )
+            bass_xml = (
+                '                <bass>\n'
+                f'                  <bass-step>{bass_step}</bass-step>\n'
+                f'{bass_alter_xml}'
+                '                </bass>\n'
+            )
+        harmony = (
+            '              <harmony>\n'
+            f'                <root>\n'
+            f'                  <root-step>{root}</root-step>\n'
+            f'{alter_xml}'
+            f'                </root>\n'
+            f'{kind_xml}'
+            f'{bass_xml}'
+            '              </harmony>\n'
+        )
+        body = m.group(0)
+        # Insert after <attributes>...</attributes> if present, else
+        # right after the <measure ...> opening tag.
+        attrs_end = re.search(r'</attributes>', body)
+        if attrs_end:
+            insert_at = attrs_end.end()
+        else:
+            opening_end = re.search(r'<measure\b[^>]*>', body)
+            insert_at = opening_end.end() if opening_end else body.find('>') + 1
+        return body[:insert_at] + '\n' + harmony + body[insert_at:]
+
+    return re.sub(
+        r'<measure\b[^>]*>(?:.|\n)*?</measure>',
+        inject, xml_string, flags=re.DOTALL,
+    )
+
+
+# Module-level cache; loaded lazily on first call to avoid blocking
+# server startup if chords.json doesn't exist yet.
+_CHORDS_DATA = None
+def _load_chords():
+    global _CHORDS_DATA
+    if _CHORDS_DATA is None:
+        try:
+            with open('chords.json') as f:
+                _CHORDS_DATA = __import__('json').load(f)
+        except FileNotFoundError:
+            _CHORDS_DATA = {}
+    return _CHORDS_DATA
+
+
 def strip_extra_clefs(xml_string):
     """Remove <clef> elements from every measure EXCEPT the first.
 
@@ -840,6 +1044,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # Audiveris dropped a whole-note notehead.
             if xml is not None:
                 xml = fill_empty_measures(xml)
+            # Inject chord symbols from chords.json so cyclic
+            # exercises show the chord progression above each measure.
+            if xml is not None:
+                try:
+                    xml = inject_chord_symbols(xml, eid)
+                except Exception as e:
+                    # Chord injection is best-effort; never fail a
+                    # served exercise because of bad chord data.
+                    import sys as _sys
+                    print(f'chord inject failed for {eid}: {e}', file=_sys.stderr)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Access-Control-Allow-Origin", "*")
