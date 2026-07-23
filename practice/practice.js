@@ -606,7 +606,9 @@
     // the source label instead. Stitched etudes always have a count.
     var exCount = (etude.exerciseIds || []).length;
     var sourceLabel = etude.source === 'pattern' ? 'pattern-generated'
-      : etude.source === 'composer' ? 'composed' : 'random';
+      : etude.source === 'composer' ? 'composed'
+      : etude.source === 'master-class' ? 'master class'
+      : 'random';
     var label = exCount > 0
       ? exCount + ' exercises · ' + (etude.noteCount || 0) + ' notes'
       : sourceLabel + ' · ' + (etude.noteCount || 0) + ' notes';

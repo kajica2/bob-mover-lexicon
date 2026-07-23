@@ -37,6 +37,7 @@
       <!-- MODE SELECTOR -->
       <div class="mode-selector" role="tablist">
         <button class="mode-tab active" data-mode="composer" role="tab" aria-selected="true">Composer</button>
+        <button class="mode-tab" data-mode="master-class" role="tab" aria-selected="false">Master Class</button>
         <button class="mode-tab" data-mode="random" role="tab" aria-selected="false">Generator</button>
       </div>
 
@@ -76,6 +77,19 @@
             <div id="composer-exercises" class="composer-exercises"></div>
           </section>
         </div>
+      </div>
+
+      <!-- MASTER CLASS MODE -->
+      <div id="mode-master-class" class="mode-pane">
+        <section class="panel">
+          <p class="muted" style="margin-top:0">
+            Six pre-built pedagogical etudes distilled from the Bob Mover Master Class series.
+            Each etude isolates a single concept (voice leading, chromatic passageway, harmonic
+            shift, melodic paraphrase, the pocket, and symmetrical key shifts). Click any line
+            to generate, save, and jump to the practice page.
+          </p>
+          <div id="master-class-list" class="master-class-list"></div>
+        </section>
       </div>
 
       <!-- RANDOM MODE -->
@@ -135,7 +149,8 @@
   </main>
 
   <script src="etudes-store.js"></script>
-  <script src="etudes-stitch.js?v=31"></script>
-  <script src="etudes.js?v=31"></script>
+  <script src="etudes-curriculum.js?v=32"></script>
+  <script src="etudes-stitch.js?v=32"></script>
+  <script src="etudes.js?v=32"></script>
 </body>
 </html>

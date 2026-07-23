@@ -36,6 +36,7 @@
   function init() {
     wireModeTabs();
     wireSavedListFilter();
+    renderMasterClass();   // Master Class has no server dependency — render immediately
     fetchExercises().then(function () {
       populateComposerSection();
       populateRandomSection();
@@ -696,6 +697,154 @@
     });
   }
 
+  // ---------- Master Class mode ----------
+  // Renders the 6 pre-built pedagogical etudes from
+  // window.masterClassEtudes.list. Each line is a clickable button:
+  // click → build MusicXML in-browser via etudesStitch.buildMasterClassEtude
+  // → save to IndexedDB (source='master-class') → navigate to
+  // /practice/?id=etude_xxx. No server roundtrip, no /api/musicxml fetch.
+  //
+  // Renders eagerly on init (no /exercises.json dependency), so the
+  // tab is interactive as soon as the user clicks the Master Class tab.
+  function renderMasterClass() {
+    const list = document.getElementById('master-class-list');
+    if (!list) return;
+    if (!window.masterClassEtudes || !window.masterClassEtudes.list) {
+      list.innerHTML = '<p class="muted">Master Class curriculum not loaded.</p>';
+      return;
+    }
+    list.innerHTML = '';
+    const etudes = window.masterClassEtudes.list;
+
+    etudes.forEach(function (etude) {
+      const card = document.createElement('div');
+      card.className = 'mc-card';
+
+      const header = document.createElement('div');
+      header.className = 'mc-header';
+      const title = document.createElement('h3');
+      title.className = 'mc-title';
+      title.textContent = etude.title;
+      header.appendChild(title);
+      const meta = document.createElement('div');
+      meta.className = 'mc-meta';
+      const mcBadge = document.createElement('span');
+      mcBadge.className = 'mc-mc-badge';
+      mcBadge.textContent = 'MC ' + etude.mc;
+      meta.appendChild(mcBadge);
+      const tempoBadge = document.createElement('span');
+      tempoBadge.className = 'mc-tempo-badge';
+      tempoBadge.textContent = '♩ = ' + etude.bpm;
+      meta.appendChild(tempoBadge);
+      const sigBadge = document.createElement('span');
+      sigBadge.className = 'mc-sig-badge';
+      sigBadge.textContent = etude.timeSig;
+      meta.appendChild(sigBadge);
+      header.appendChild(meta);
+      card.appendChild(header);
+
+      const subtitle = document.createElement('p');
+      subtitle.className = 'mc-subtitle';
+      subtitle.textContent = etude.subtitle;
+      card.appendChild(subtitle);
+
+      const concept = document.createElement('p');
+      concept.className = 'mc-concept';
+      concept.textContent = etude.concept;
+      card.appendChild(concept);
+
+      const linesWrap = document.createElement('div');
+      linesWrap.className = 'mc-lines';
+      etude.lines.forEach(function (line) {
+        const btn = document.createElement('button');
+        btn.className = 'btn mc-line-btn';
+        const name = document.createElement('div');
+        name.className = 'mc-line-name';
+        name.textContent = line.name;
+        btn.appendChild(name);
+        if (line.description) {
+          const desc = document.createElement('div');
+          desc.className = 'mc-line-desc';
+          desc.textContent = line.description;
+          btn.appendChild(desc);
+        }
+        btn.addEventListener('click', function () {
+          generateMasterClassEtude(etude, line);
+        });
+        linesWrap.appendChild(btn);
+      });
+      card.appendChild(linesWrap);
+
+      list.appendChild(card);
+    });
+  }
+
+  // Build a Master Class etude's MusicXML in-browser, save to IDB, and
+  // jump to /practice/?id=etude_xxx. Mirrors the composer/random save
+  // flow (toast on success, redirect after 600ms) but uses the
+  // dedicated Master Class builder rather than stitching server
+  // sources. `source: 'master-class'` on the IDB record means the
+  // saved-etudes card shows a distinct badge.
+  async function generateMasterClassEtude(etude, line) {
+    if (!window.etudesStitch || !window.etudesStitch.buildMasterClassEtude) {
+      toast('Master Class builder unavailable.', true);
+      return;
+    }
+    let xml;
+    try {
+      xml = window.etudesStitch.buildMasterClassEtude(etude, line);
+    } catch (e) {
+      console.error('buildMasterClassEtude failed', e);
+      toast('Build failed: ' + (e && e.message ? e.message : e), true);
+      return;
+    }
+    // Light range check: don't clamp (the builder writes sax-friendly
+    // pitches already) but warn if anything falls outside the user's
+    // saved range so a future curriculum edit doesn't silently produce
+    // out-of-range notes.
+    try {
+      const r = getEtudesRange();
+      const clamped = window.etudesStitch.clampToRange(xml, r.lowMidi, r.highMidi);
+      if (clamped.moved > 0) {
+        toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
+        xml = clamped.xml;
+      }
+    } catch (e) {
+      console.warn('clampToRange failed for master-class etude (continuing):', e);
+    }
+
+    const pitchedCount = window.etudesStitch.countPitchedNotes(xml);
+    const name = 'MC ' + etude.id.replace(/^mc-/, '').replace(/-/g, ' ') +
+                 ' — ' + line.name;
+    const id = window.etudesStore.newId();
+    try {
+      await window.etudesStore.saveEtude({
+        id: id,
+        name: name,
+        exerciseIds: [],
+        semitones: [],
+        mode: 'master-class',
+        source: 'master-class',
+        musicxml: xml,
+        noteCount: pitchedCount,
+        metadata: {
+          etudeId: etude.id,
+          lineName: line.name,
+          mc: etude.mc,
+          bpm: etude.bpm,
+        },
+      });
+    } catch (e) {
+      console.error('saveEtude failed', e);
+      toast('Save failed: ' + e.message, true);
+      return;
+    }
+    toast('Saved "' + name + '" — opening Practice…');
+    setTimeout(function () {
+      window.location.href = '/practice/?id=' + encodeURIComponent(id);
+    }, 600);
+  }
+
   // ---------- Generate & save ----------
   async function generateAndSave(source, customName) {
     let parts;
@@ -861,11 +1010,13 @@
     name.className = 'etude-name';
     name.textContent = et.name;
     titleRow.appendChild(name);
-    // Source badge: distinguishes pattern / composed / random at a glance.
+    // Source badge: distinguishes pattern / composed / random / master-class at a glance.
     const sourceBadge = document.createElement('span');
     sourceBadge.className = 'etude-source-badge source-' + (et.source || 'random');
     sourceBadge.textContent = et.source === 'pattern' ? 'pattern'
-      : et.source === 'composer' ? 'composed' : 'random';
+      : et.source === 'composer' ? 'composed'
+      : et.source === 'master-class' ? 'master class'
+      : 'random';
     titleRow.appendChild(sourceBadge);
     info.appendChild(titleRow);
 

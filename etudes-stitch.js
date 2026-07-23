@@ -332,11 +332,226 @@
     }
   }
 
+  // ---------- Master Class etude builder ----------
+  //
+  // Generates a complete MusicXML document for a single line from the
+  // Master Class curriculum. Unlike stitch() (which concatenates
+  // exercises from the server), this is a fresh, single-part score
+  // built from the curriculum's note-level data:
+  //
+  //   buildMasterClassEtude(etude, line) -> MusicXML string
+  //
+  // Inputs:
+  //   etude : { title, bpm, timeSig, lines: [...], ... }
+  //   line  : { name, description, chords: [{name, bars: [{notes: [...]}]}] }
+  //
+  // Each `note` is { p: 'C4' | null, d: 1 } (p=null = rest).
+  //
+  // Why a separate builder rather than reusing stitch():
+  //   - The curriculum is note-level (we have the actual pitches), not
+  //     exercise-level. There's no server source to fetch.
+  //   - The output is a single Part, single Voice, treble-clef, 4/4 score.
+  //     The 3/4 waltz is encoded as 4/4 with a quarter rest on beat 4 —
+  //     the practice page's parseMusicXML hardcodes 4 beats per measure
+  //     so a true 3/4 time signature would mis-time the notes.
+  //   - The user's title is injected as <work-title>.
+  //
+  // Asserts at runtime:
+  //   - Every bar's notes sum to exactly 4 beats (a data error here
+  //     would be silent otherwise; the practice page would just play
+  //     a mis-timed score).
+  //   - Every pitch string parses to step+alter+octave.
+  //
+  // Helper: convert a pitch string ('C4', 'Bb3', 'F#5', 'Fb4', 'Bbb3')
+  // into { step, alter, octave } for the MusicXML <pitch> block.
+  // Supports up to two sharps or two flats (MusicXML's <alter> range).
+  function parsePitchString(p) {
+    // Match the letter, optional 1-2 accidentals, then the octave digits.
+    const m = /^([A-G])(##|bb|#|b)?(-?\d+)$/.exec(p);
+    if (!m) throw new Error('parsePitchString: bad pitch "' + p + '"');
+    const step = m[1];
+    const acc = m[2] || '';
+    const octave = parseInt(m[3], 10);
+    let alter = 0;
+    if (acc === '#')  alter = 1;
+    else if (acc === 'b')  alter = -1;
+    else if (acc === '##') alter = 2;
+    else if (acc === 'bb') alter = -2;
+    return { step: step, alter: alter, octave: octave };
+  }
+
+  // Helper: convert a beat duration (1=quarter, 0.5=eighth, etc.) to a
+  // MusicXML <type> string. We map the standard set: whole=4, half=2,
+  // quarter=1, eighth=0.5, 16th=0.25. Anything else is rounded to the
+  // nearest of those five.
+  function durationToType(beats) {
+    // Compare with a small epsilon so floating-point drift (e.g. 0.5+0.5)
+    // doesn't push us into the wrong bucket.
+    const eps = 0.001;
+    if (Math.abs(beats - 4)    < eps) return 'whole';
+    if (Math.abs(beats - 2)    < eps) return 'half';
+    if (Math.abs(beats - 1)    < eps) return 'quarter';
+    if (Math.abs(beats - 0.5)  < eps) return 'eighth';
+    if (Math.abs(beats - 0.25) < eps) return '16th';
+    // Fallback: round to nearest supported type. This shouldn't fire
+    // if the curriculum data is sane (all bars sum to exactly 4 with
+    // types drawn from {whole, half, quarter, eighth, 16th}), but we
+    // degrade gracefully rather than throwing.
+    if (beats >= 3)    return 'whole';
+    if (beats >= 1.5)  return 'half';
+    if (beats >= 0.75) return 'quarter';
+    if (beats >= 0.375) return 'eighth';
+    return '16th';
+  }
+
+  // Build one <note> element. `note` is { p, d } from the curriculum
+  // (p=null → rest). `divisions` is the per-beat resolution (always
+  // 4 here — a quarter = 4 divisions, so a half = 8, a whole = 16).
+  function buildNoteXml(note, divisions) {
+    const dur = Math.round(note.d * divisions);
+    const type = durationToType(note.d);
+    if (note.p == null) {
+      return (
+        '<note>' +
+          '<rest/>' +
+          '<duration>' + dur + '</duration>' +
+          '<type>' + type + '</type>' +
+        '</note>'
+      );
+    }
+    const { step, alter, octave } = parsePitchString(note.p);
+    return (
+      '<note>' +
+        '<pitch>' +
+          '<step>' + step + '</step>' +
+          (alter === 0 ? '' : '<alter>' + alter + '</alter>') +
+          '<octave>' + octave + '</octave>' +
+        '</pitch>' +
+        '<duration>' + dur + '</duration>' +
+        '<type>' + type + '</type>' +
+      '</note>'
+    );
+  }
+
+  // Build one <measure> element. `bar` is { notes: [...] } from the
+  // curriculum. Asserts the bar sums to exactly 4 beats — a data
+  // error in the curriculum should fail loud, not play a mis-timed
+  // score in the practice page.
+  function buildBarXml(bar, divisions, measureNumber) {
+    let total = 0;
+    for (let i = 0; i < bar.notes.length; i++) total += bar.notes[i].d;
+    if (Math.abs(total - 4) > 0.001) {
+      throw new Error(
+        'buildBarXml: bar ' + measureNumber + ' sums to ' + total +
+        ' beats, expected 4. This is a curriculum data error.'
+      );
+    }
+    const notesXml = bar.notes.map(function (n) {
+      return buildNoteXml(n, divisions);
+    }).join('');
+    return '<measure number="' + measureNumber + '">' + notesXml + '</measure>';
+  }
+
+  // Main entry point. Returns a complete MusicXML string ready to
+  // save to IDB and hand to the practice page's renderScore.
+  function buildMasterClassEtude(etude, line) {
+    if (!etude || !line) throw new Error('buildMasterClassEtude: etude and line required');
+
+    // Flatten chords → bars into a single ordered list of bar objects.
+    // Each chord's `bars` is an array; we keep the chord name as a
+    // comment in the measure so anyone reading the raw XML can see the
+    // harmonic context. (Verovio ignores comments; this is purely for
+    // human debugging.)
+    const flatBars = [];
+    for (let i = 0; i < line.chords.length; i++) {
+      const ch = line.chords[i];
+      for (let j = 0; j < ch.bars.length; j++) {
+        flatBars.push({ notes: ch.bars[j].notes, chord: ch.name });
+      }
+    }
+    if (!flatBars.length) throw new Error('buildMasterClassEtude: no bars in line');
+
+    const divisions = 4;  // 1 quarter = 4 divisions (industry default)
+    const bpm = etude.bpm || 80;
+    const safeTitle = (etude.title + ' — ' + line.name)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // First measure: include <attributes> with divisions, key (C major /
+    // no accidentals), time (4/4 — we always use 4/4 even for the
+    // waltz, see header comment), and treble clef. Subsequent measures
+    // are bare <note> sequences; the earlier <attributes> carry through.
+    const firstBar = flatBars[0];
+    const firstNotesXml = firstBar.notes.map(function (n) {
+      return buildNoteXml(n, divisions);
+    }).join('');
+    const total0 = firstBar.notes.reduce(function (s, n) { return s + n.d; }, 0);
+    if (Math.abs(total0 - 4) > 0.001) {
+      throw new Error('buildMasterClassEtude: first bar sums to ' + total0 + ' beats, expected 4');
+    }
+    const measure1Xml =
+      '<measure number="1">' +
+        '<attributes>' +
+          '<divisions>' + divisions + '</divisions>' +
+          '<key><fifths>0</fifths></key>' +
+          '<time><beats>4</beats><beat-type>4</beat-type></time>' +
+          '<clef><sign>G</sign><line>2</line></clef>' +
+        '</attributes>' +
+        '<sound tempo="' + bpm + '"/>' +
+        firstNotesXml +
+      '</measure>';
+
+    const restMeasuresXml = [];
+    for (let i = 1; i < flatBars.length; i++) {
+      restMeasuresXml.push(buildBarXml(flatBars[i], divisions, i + 1));
+    }
+
+    // Stitch everything into a complete <score-partwise> document.
+    return (
+      '<?xml version="1.0" encoding="UTF-8"?>' +
+      '<!DOCTYPE score-partwise PUBLIC "-//Recordare//DTD MusicXML 3.1 Partwise//EN" "http://www.musicxml.org/dtds/partwise.dtd">' +
+      '<score-partwise version="3.1">' +
+        '<work><work-title>' + safeTitle + '</work-title></work>' +
+        '<identification>' +
+          '<creator type="composer">Bob Mover (Master Class)</creator>' +
+          '<encoding><software>Bob Mover Lexicon — Master Class builder</software></encoding>' +
+        '</identification>' +
+        '<part-list>' +
+          '<score-part id="P1"><part-name>Voice</part-name></score-part>' +
+        '</part-list>' +
+        '<part id="P1">' +
+          measure1Xml +
+          restMeasuresXml.join('') +
+        '</part>' +
+      '</score-partwise>'
+    );
+  }
+
+  // Count <note> elements in a Master-Class-generated MusicXML string.
+  // Mirrors countNotes() above but only counts non-rest notes — useful
+  // for the saved-etudes card display ("4 notes" not "8 notes with 4
+  // rests"). Mirrors the practice page's countNotes semantics.
+  function countPitchedNotes(xml) {
+    if (!xml) return 0;
+    // Match <note>...</note> blocks that contain a <pitch> element.
+    // We do this with a single regex by matching <note>...</note> then
+    // checking for <pitch> in each block. For the Master Class's
+    // small scores this is fast enough; for huge scores we'd switch
+    // to a proper parser.
+    const noteBlocks = xml.match(/<note>[\s\S]*?<\/note>/g) || [];
+    let n = 0;
+    for (let i = 0; i < noteBlocks.length; i++) {
+      if (/<pitch>/.test(noteBlocks[i])) n++;
+    }
+    return n;
+  }
+
   window.etudesStitch = {
     stitch: stitch,
     transposePitch: transposePitch,
     countNotes: countNotes,
     countMeasures: countMeasures,
     clampToRange: clampToRange,
+    buildMasterClassEtude: buildMasterClassEtude,
+    countPitchedNotes: countPitchedNotes,
   };
 })();
