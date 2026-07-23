@@ -600,3 +600,45 @@
   opacity: 1;
   color: #dc2626;
 }
+
+.playback-row {
+  align-items: center;
+}
+.playback-row label {
+  margin-right: 8px;
+}
+.tempo-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px;
+}
+.tempo-slider {
+  width: 130px;
+  vertical-align: middle;
+}
+.tempo-display {
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  display: inline-block;
+  color: var(--ink-700);
+}
+.playback-status {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ink-500);
+}
+.playback-status.playing { color: var(--brass-600); }
+.playback-status.error   { color: #b00020; }
+
+/* Synchronized score highlight during MIDI playback.
+ * When the playback engine fires onNote(note), the matching SVG <g> gets
+ * .active added; .active paints the notehead with the brass accent so the
+ * user sees which note is sounding right now. */
+#score-container g.note.active path,
+#score-container g.note.active ellipse,
+#score-container g.note.active rect {
+  fill: var(--brass-400);
+  stroke: var(--brass-700);
+  transition: fill 0.05s linear, stroke 0.05s linear;
+}

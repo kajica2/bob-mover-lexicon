@@ -298,6 +298,10 @@
     state.zoomPage = 1;
     renderAtScale();
     state.currentScore = parseMusicXML(xmlString);
+    // Index the rendered SVG notes by horizontal position so the playback
+    // engine can highlight them in sync. Verovio's note ids are timestamp-
+    // based and not stable across renders, so we go by SVG X position.
+    indexScoreNotePositions();
   }
 
   function zoomIn() {
@@ -346,7 +350,10 @@
   }
 
   async function loadExercise(id) {
-    stop(); // stop any playing
+    stop(); // stop any playing (audio recorder)
+    // Also stop the MIDI playback engine so notes from the previous
+    // exercise don't continue sounding under the new score.
+    stopPlayback();
 
     // Etude load path: client-side stitched MusicXML from IndexedDB.
     // Etude IDs are prefixed "etude_" and don't exist in exercises.json,
@@ -473,10 +480,21 @@
       : sourceLabel + ' · ' + (etude.noteCount || 0) + ' notes';
     document.getElementById('ex-page').textContent = label;
 
-    // Favorites: etudes don't have favorites. Hide the star.
+    // Etudes CAN be favorited (server-side). Show the star and load
+    // its current state. The favorite API now accepts string IDs.
     const favBtn = document.getElementById('btn-favorite');
     if (favBtn) {
-      favBtn.style.visibility = 'hidden';
+      favBtn.style.visibility = '';
+      applyFavoriteState(favBtn, false);  // optimistic default
+      try {
+        const r = await fetch(`../api/favorites/${encodeURIComponent(id)}`);
+        if (r.ok) {
+          const d = await r.json();
+          applyFavoriteState(favBtn, !!d.favorited);
+        }
+      } catch (e) {
+        console.error('Favorite check failed:', e);
+      }
     }
 
     document.getElementById('score-container').innerHTML = '<div class="score-loading">Loading notation…</div>';
@@ -1092,6 +1110,8 @@
     });
     // Favorite button (the star in the player header). Clicking toggles
     // the favorite state on the server and flips the star's visual state.
+    // Works for both numeric exercise IDs and string etude IDs
+    // (e.g. "etude_<uuid>"). The favorites API now accepts both.
     const favBtn = document.getElementById('btn-favorite');
     if (favBtn) {
       favBtn.addEventListener('click', async () => {
@@ -1102,7 +1122,7 @@
         favBtn.disabled = true;
         try {
           const method = willFavorite ? 'POST' : 'DELETE';
-          const r = await fetch(`../api/favorites/${state.currentId}`, { method });
+          const r = await fetch(`../api/favorites/${encodeURIComponent(state.currentId)}`, { method });
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const d = await r.json();
           applyFavoriteState(favBtn, d.favorited);
@@ -1137,6 +1157,172 @@
     if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
     if (state.currentId) loadExercise(state.currentId);
   });
+
+  // ===== MIDI playback =====
+  // Wires the Playback control row (Play/Stop/tempo-slider/metronome) to
+  // window.playbackEngine loaded from playback-engine.js. The engine
+  // handles the actual audio synthesis; this code is just the UI glue.
+
+  // Cancel any in-flight playback and reset the Play/Stop button state.
+  // Called when navigating to a different exercise so notes from the
+  // previous one don't bleed into the new score.
+  function stopPlayback() {
+    const eng = window.playbackEngine;
+    if (eng) {
+      try { eng.stop(); } catch (e) {}
+    }
+    clearNoteHighlights();
+    const playBtn = document.getElementById('btn-playback-play');
+    const stopBtn = document.getElementById('btn-playback-stop');
+    if (playBtn) playBtn.disabled = false;
+    if (stopBtn) stopBtn.disabled = true;
+    const statusEl = document.getElementById('playback-status');
+    if (statusEl) {
+      statusEl.textContent = 'ready';
+      statusEl.className = 'playback-status';
+    }
+  }
+
+  function wirePlaybackControls() {
+    const playBtn  = document.getElementById('btn-playback-play');
+    const stopBtn  = document.getElementById('btn-playback-stop');
+    const tempo    = document.getElementById('playback-tempo');
+    const tempoLbl = document.getElementById('playback-tempo-label');
+    const metroBtn = document.getElementById('btn-playback-metronome');
+    const statusEl = document.getElementById('playback-status');
+    if (!playBtn || !stopBtn) return;
+
+    function setStatus(text, cls) {
+      if (!statusEl) return;
+      statusEl.textContent = text;
+      statusEl.className = 'playback-status' + (cls ? ' ' + cls : '');
+    }
+
+    function effectiveBpm() {
+      const base = (state.currentScore && state.currentScore.bpm) || 120;
+      const pct  = tempo ? (parseInt(tempo.value, 10) || 100) : 100;
+      return Math.max(20, Math.round(base * pct / 100));
+    }
+
+    function refreshTempoLabel() {
+      if (tempoLbl) {
+        const pct = tempo ? (parseInt(tempo.value, 10) || 100) : 100;
+        tempoLbl.textContent = pct + '%';
+      }
+    }
+
+    playBtn.addEventListener('click', () => {
+      if (!state.currentScore || !state.currentScore.notes || !state.currentScore.notes.length) {
+        setStatus('no notes', 'error');
+        return;
+      }
+      const eng = window.playbackEngine;
+      if (!eng) { setStatus('engine missing', 'error'); return; }
+      // init() lazily creates the AudioContext on first user gesture.
+      eng.init();
+      // Some browsers (iOS Safari) leave the context in 'suspended' until
+      // an explicit resume(); calling it here is harmless.
+      try { if (eng.ctx && eng.ctx.state === 'suspended') eng.ctx.resume(); } catch (e) {}
+      eng.setNotes(state.currentScore.notes, (state.currentScore.bpm || 120));
+      eng.setTempo(effectiveBpm());
+      const started = eng.play({
+        onNote: (n) => highlightNote(n, true),
+        onEnd:  () => {
+          playBtn.disabled = false;
+          stopBtn.disabled = true;
+          clearNoteHighlights();
+          setStatus('done');
+        },
+      });
+      if (!started) { setStatus('audio blocked', 'error'); return; }
+      playBtn.disabled = true;
+      stopBtn.disabled = false;
+      setStatus('playing', 'playing');
+    });
+
+    stopBtn.addEventListener('click', () => {
+      const eng = window.playbackEngine;
+      if (eng) eng.stop();
+      playBtn.disabled = false;
+      stopBtn.disabled = true;
+      clearNoteHighlights();
+      setStatus('ready');
+    });
+
+    if (tempo) {
+      tempo.addEventListener('input', () => {
+        refreshTempoLabel();
+        const eng = window.playbackEngine;
+        if (eng) eng.setTempo(effectiveBpm());
+      });
+      refreshTempoLabel();
+    }
+
+    if (metroBtn) {
+      metroBtn.addEventListener('click', () => {
+        const on = !metroBtn.classList.contains('active');
+        metroBtn.classList.toggle('active', on);
+        metroBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        const eng = window.playbackEngine;
+        if (eng) eng.setMetronome(on);
+      });
+      metroBtn.setAttribute('aria-pressed', 'false');
+    }
+  }
+
+  // Map every rendered <g class="note"> in the SVG to the beat position
+  // that produced it. Verovio emits <g class="note"> in document order,
+  // matching parseMusicXML's notes[] array. We capture the SVG X position
+  // (bounding-box left edge) and sort by it so a "closest beat to this
+  // position" lookup can find the right element when playback fires
+  // onNote(note).
+  function indexScoreNotePositions() {
+    state.scoreNotePositions = [];
+    if (!state.currentScore || !state.currentScore.notes || !state.currentScore.notes.length) return;
+    const groups = Array.from(document.querySelectorAll('#score-container g.note'));
+    if (!groups.length) return;
+    const positions = groups.map((el, i) => {
+      let x = 0;
+      try {
+        const bb = el.getBBox();
+        if (bb && typeof bb.x === 'number') x = bb.x;
+      } catch (e) { /* SVG bbox unavailable in some browsers; ignore */ }
+      return {
+        x,
+        beat: state.currentScore.notes[i] ? state.currentScore.notes[i].beat : 0,
+        el,
+      };
+    });
+    positions.sort((a, b) => a.x - b.x);
+    state.scoreNotePositions = positions;
+  }
+
+  // Highlight the SVG note whose beat is closest to `note.beat`. Called by
+  // the playback engine's onNote callback. If the position indexer hasn't
+  // run yet (score hasn't rendered), this is a no-op.
+  function highlightNote(note, on) {
+    if (!note || !state.scoreNotePositions || !state.scoreNotePositions.length) return;
+    let best = state.scoreNotePositions[0];
+    let bestDiff = Math.abs(best.beat - note.beat);
+    for (let i = 1; i < state.scoreNotePositions.length; i++) {
+      const d = Math.abs(state.scoreNotePositions[i].beat - note.beat);
+      if (d < bestDiff) { bestDiff = d; best = state.scoreNotePositions[i]; }
+    }
+    if (!best || !best.el) return;
+    if (on) best.el.classList.add('active');
+    else    best.el.classList.remove('active');
+  }
+
+  // Clear every .active highlight. Called on Stop and on natural end-of-
+  // playback (via the engine's onEnd callback).
+  function clearNoteHighlights() {
+    const els = document.querySelectorAll('#score-container g.note.active');
+    for (const el of els) el.classList.remove('active');
+  }
+
+  // Render the playback row on page load. Safe to call even before any
+  // exercise is loaded — the controls just sit idle.
+  wirePlaybackControls();
 
   // Cycle controls — dropdown/bars are STAGED, then committed by the
     // Apply button. Persisted across sessions.
@@ -1301,6 +1487,21 @@
         toggleFullPage();
       } else if (e.key === 'Escape') {
         if (state.fullPage) { e.preventDefault(); closeFullPage(); }
+      } else if (e.key === ' ' || e.code === 'Space') {
+        // Space toggles play/stop on the MIDI player. Don't hijack the
+        // spacebar when the user is typing in an input/textarea or any
+        // contenteditable region.
+        const t = e.target;
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+        e.preventDefault();
+        const playBtn = document.getElementById('btn-playback-play');
+        const stopBtn = document.getElementById('btn-playback-stop');
+        if (!playBtn || !stopBtn) return;
+        // Toggle: if Stop is enabled (i.e. we're playing), click it; otherwise
+        // click Play. Disabled buttons in HTML ignore clicks, so this is safe
+        // even if both are present.
+        if (!stopBtn.disabled) stopBtn.click();
+        else playBtn.click();
       } else if (e.key === 'l' || e.key === 'L') {
         logPractice();
       } else if (e.key === 'h' || e.key === 'H') {

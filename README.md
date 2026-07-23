@@ -20,10 +20,11 @@ see at: https://web-production-90e67.up.railway.app/
   - Server-side, returns valid MusicXML
 - **Audio playback** with Web Audio API:
   - Triangle-wave synth (sounds vaguely saxophone-ish)
-  - Tempo control (40-320 BPM)
-  - Metronome on beat 1
-  - Volume slider
-  - Play/Stop with auto-stop
+  - Score-synced note highlighting as it plays
+  - Adjustable tempo (% of written tempo, 40-240%)
+  - Optional metronome click (4/4 accent on downbeat)
+  - Play/Stop with auto-stop at end of score
+  - Respects cycle mode (plays through the entire N-bar cycle if Apply was clicked)
 - **Session queue** — build a list of exercises, jump between them
 - **Collections** — pre-made sets (Coltrane, Bud Powell, Barry Harris, 30-min Warmup, II-V-I Essentials, Whole Tone)
 - **Log this practice** form — record tempo reached, duration, key, notes

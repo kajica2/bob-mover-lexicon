@@ -104,6 +104,17 @@
               <audio id="audio-player" class="audio-player" controls preload="metadata" style="display:none"></audio>
               <a id="audio-download" class="btn btn-secondary btn-sm" style="display:none" download>⬇ Download</a>
             </div>
+            <div class="control-row playback-row">
+              <label>Playback</label>
+              <button id="btn-playback-play" class="btn btn-primary" title="Play exercise (Space)">▶ Play</button>
+              <button id="btn-playback-stop" class="btn btn-secondary" disabled title="Stop (Space)">⏹ Stop</button>
+              <label class="tempo-label" for="playback-tempo">Tempo
+                <input id="playback-tempo" type="range" min="40" max="240" value="100" class="tempo-slider">
+                <span id="playback-tempo-label" class="tempo-display">100%</span>
+              </label>
+              <button id="btn-playback-metronome" class="btn btn-ghost btn-sm" title="Toggle metronome click" aria-pressed="false">🥁 Metronome</button>
+              <span id="playback-status" class="playback-status">ready</span>
+            </div>
           </div>
 
           <!-- Zoom/page controls -->
@@ -206,6 +217,7 @@
   <script src="../range-modal.js"></script>
   <script src="takes-store.js"></script>
   <script src="../etudes-store.js"></script>
+  <script src="playback-engine.js"></script>
   <script src="practice.js"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
