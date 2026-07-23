@@ -353,6 +353,75 @@ def swap_to_bass_clef(xml_string):
     return clef_re.sub(rewrite, xml_string)
 
 
+# ---------------------------------------------------------------------
+# Final-bar normalization
+# ---------------------------------------------------------------------
+
+# Verovio's rendering of <bar-style>:
+#   light-heavy  -> thin-thick double bar (the standard "||" final bar)
+#   light-light  -> double-thin bar (double-bar with no thick side)
+#   heavy-heavy  -> thick-thick final bar (rendered, but unusual)
+#   regular      -> single thin bar
+#
+# The upstream Bob Mover .mxl files have three different final-bar
+# conventions mixed across the 407 exercises:
+#   - 375 exercises use light-light (double-thin)
+#   - 5 exercises use light-heavy (the standard final bar)
+#   - 1 exercise uses regular
+#   - 37 exercises have NO <barline> at all on the last measure
+#
+# Practicing from a score where the end isn't marked with a clear "||"
+# obscures where one exercise ends and the next would begin. We
+# normalize the served XML so every exercise's final measure ends
+# with a visible thick-thin bar (||), the way most published music
+# shows end-of-piece.
+#
+# The transform is lossless at the markup level: a light-light final
+# bar in the source remains a stylistic "section end" (it just renders
+# as || instead of ||). The committed .mxl files are unchanged;
+# only the served stream is normalized.
+_BAR_STYLE_NORMALIZE_RE = re.compile(
+    r'(<barline\b[^>]*\blocation="right"[^>]*>\s*'
+    r'<bar-style>\s*)(?:light-light|regular|final-heavy|heavy)(\s*</bar-style>)',
+    re.DOTALL,
+)
+
+def normalize_final_barlines(xml_string):
+    """Rewrite every right-position <barline><bar-style> to light-heavy
+    so Verovio renders a visible thick-thin final bar (||). Also
+    inject a final barline into exercises whose last measure has none.
+
+    Safe to run on already-normalized XML: an idempotent regex.
+    """
+    import re
+    if not xml_string:
+        return xml_string
+
+    # 1. Replace non-light-heavy right-side bar styles with light-heavy.
+    out = _BAR_STYLE_NORMALIZE_RE.sub(r'\1light-heavy\2', xml_string)
+
+    # 2. If the last measure has no right-side barline at all, inject one
+    #    at the end (just before </measure> on the last measure).
+    #    Check the *last* <measure ...>...</measure> block:
+    def add_final_barline(xml):
+        last_m = list(re.finditer(r'<measure\b[^>]*>(?:.|\n)*?</measure>', xml, re.DOTALL))
+        if not last_m:
+            return xml
+        last = last_m[-1]
+        if '<barline' in last.group(0) and re.search(r'location="right"', last.group(0)):
+            # already has a right-side barline
+            return xml
+        # Insert a final barline just before the closing </measure>
+        m_start, m_end = last.span()
+        # m_end points right after </measure>; we want to replace </measure>
+        # with our barline followed by </measure>
+        barline = '<barline location="right"><bar-style>heavy-heavy</bar-style></barline>'
+        return xml[:m_end - len('</measure>')] + barline + '</measure>' + xml[m_end:]
+
+    out = add_final_barline(out)
+    return out
+
+
 def strip_extra_clefs(xml_string):
     """Remove <clef> elements from every measure EXCEPT the first.
 
@@ -691,6 +760,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # Bass clef swap for bass-family instruments
             if instrument in BASS_CLEF_INSTRUMENTS and xml is not None:
                 xml = swap_to_bass_clef(xml)
+            # Normalize every exercise's final barline to a standard
+            # thick-thin "||" so the user can clearly see where the
+            # exercise ends. The committed .mxl files are unchanged;
+            # only the served stream is normalized.
+            if xml is not None:
+                xml = normalize_final_barlines(xml)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Access-Control-Allow-Origin", "*")
