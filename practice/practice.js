@@ -44,6 +44,13 @@
     // Walk through measures, collecting notes
     const measures = doc.querySelectorAll('measure');
     let divisions = 1;
+    // Read <divisions> from the first measure's <attributes>. MusicXML
+    // stores note durations in "divisions" units; we divide by this to
+    // get beats. Without this, every <duration>2</duration> triplet would
+    // be misread as a half note — the engine then schedules the whole
+    // exercise at the wrong times and pitches. v21 bug fix.
+    const firstDivs = doc.querySelector('measure > attributes > divisions');
+    if (firstDivs) divisions = parseFloat(firstDivs.textContent);
     let measureNum = 0;
     let currentTime = 0; // in beats
     let keyFifths = 0;

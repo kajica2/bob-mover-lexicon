@@ -208,16 +208,20 @@
     // to bypass MonoSynth's ADSR/filter shape that rendered ex 1+
     // inaudible on built-in Mac speakers.
     var rawCtx = T.getContext().rawContext;
-    for (var i = 0; i < notes.length; i++) {
-      var note = notes[i];
+    for (let i = 0; i < notes.length; i++) {
+      const note = notes[i];
       // Capture callbacks in locals for closure stability (cancelled by
       // Stop which nulls the module-level refs).
-      var onNote = onNoteCb;
-      var midi = note.midi;
+      const onNote = onNoteCb;
+      const midi = note.midi;
       // Compute the note's duration in seconds. note.duration is in
       // beats; multiply by (60 / bpm) to get seconds.
-      var durSec = Math.max(0.05, note.duration * 60 / bpm);
-      var id = T.Transport.scheduleOnce(function(t){
+      const durSec = Math.max(0.05, note.duration * 60 / bpm);
+      // CRITICAL: const/let give each iteration its OWN binding of
+      // note/midi/durSec. v20's `var` made them function-scoped, so
+      // every scheduled callback read the LAST note's values — the
+      // entire exercise played as a single repeated D4 tone. v21 fix.
+      const id = T.Transport.scheduleOnce(function(t){
         scheduleNoteRaw(rawCtx, midi, t, durSec, false);
         if (onNote) {
           try { T.Draw.schedule(function(){ onNote(note); }, t); } catch (e) {}
@@ -232,12 +236,12 @@
     // Metronome (optional): one click per beat across the score, locked
     // to transport time so it stays in sync even after tempo changes.
     if (metronomeOn) {
-      var totalBeats = Math.ceil(totalBeatsOf(notes));
-      for (var b = 0; b < totalBeats; b++) {
-        var isDown = (b % 4) === 0;
-        var onBeat = onBeatCb;
-        var clickHz = isDown ? METRO_DOWN_HZ : METRO_BEAT_HZ;
-        var id = T.Transport.scheduleOnce(function(t){
+      const totalBeats = Math.ceil(totalBeatsOf(notes));
+      for (let b = 0; b < totalBeats; b++) {
+        const isDown = (b % 4) === 0;
+        const onBeat = onBeatCb;
+        const clickHz = isDown ? METRO_DOWN_HZ : METRO_BEAT_HZ;
+        const id = T.Transport.scheduleOnce(function(t){
           scheduleNoteRaw(rawCtx, 60, t, METRO_DUR, true);
           if (onBeat) {
             try { T.Draw.schedule(function(){ onBeat(b); }, t); } catch (e) {}
