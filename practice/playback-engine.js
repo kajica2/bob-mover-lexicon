@@ -71,7 +71,10 @@
       try {
         // Build the synth. connect to destination.
         synth = new T.MonoSynth(SYNTH_OPTS).toDestination();
-        synth.volume.value = -18;  // ~ -18 dB master trim (gentle)
+        // Triangle-wave master. -8 dBFS gives a healthy room-level signal
+        // without hard-clipping on busy runs; the engine output is filtered
+        // through the synth's lowpass + filter env anyway.
+        synth.volume.value = -8;
 
         // Metronome: two cheap membrane voices.
         metroDown = new T.MembraneSynth({

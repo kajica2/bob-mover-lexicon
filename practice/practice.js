@@ -1336,6 +1336,13 @@
   // the playback engine's onNote callback. If the position indexer hasn't
   // run yet (score hasn't rendered), this is a no-op.
   function highlightNote(note, on) {
+    // Clear any other notes that may still be highlighted from prior
+    // attacks. Monophonic playback — at most one note sounds at a time,
+    // so only the matching element should carry .active.
+    if (on) {
+      const prev = document.querySelectorAll('#score-container g.note.active');
+      for (const el of prev) el.classList.remove('active');
+    }
     if (!note || !state.scoreNotePositions || !state.scoreNotePositions.length) return;
     let best = state.scoreNotePositions[0];
     let bestDiff = Math.abs(best.beat - note.beat);
@@ -1344,8 +1351,11 @@
       if (d < bestDiff) { bestDiff = d; best = state.scoreNotePositions[i]; }
     }
     if (!best || !best.el) return;
-    if (on) best.el.classList.add('active');
-    else    best.el.classList.remove('active');
+    if (on) {
+      best.el.classList.add('active');
+    } else {
+      best.el.classList.remove('active');
+    }
   }
 
   // Clear every .active highlight. Called on Stop and on natural end-of-
