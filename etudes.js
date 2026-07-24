@@ -308,20 +308,26 @@
     var nameInput = document.getElementById('curated-name');
     var descInput = document.getElementById('curated-description');
     var statusEl = document.getElementById('curated-upload-status');
-    var file = fileInput.files && fileInput.files[0];
-    if (!file) {
-      statusEl.textContent = 'Pick a .mxl file first.';
+    var files = fileInput.files ? Array.from(fileInput.files) : [];
+    if (!files.length) {
+      statusEl.textContent = 'Pick at least one .mxl file.';
       return;
     }
-    if (!nameInput.value.trim()) {
-      statusEl.textContent = 'Display name is required.';
+    // Display name is optional for batch uploads — the server uses
+    // the file's basename when no name is provided. We still warn
+    // when a single file is uploaded without a name so the user
+    // doesn't accidentally get a generic "head" entry.
+    if (files.length === 1 && !nameInput.value.trim()) {
+      statusEl.textContent = 'Display name is required for a single upload.';
       nameInput.focus();
       return;
     }
-    statusEl.textContent = 'Uploading…';
+    statusEl.textContent = 'Uploading ' + files.length + ' file' +
+      (files.length === 1 ? '' : 's') + '…';
     var fd = new FormData();
-    fd.append('file', file, file.name);
-    fd.append('name', nameInput.value.trim());
+    files.forEach(function (f) { fd.append('file', f, f.name); });
+    var trimmedName = nameInput.value.trim();
+    if (trimmedName) fd.append('name', trimmedName);
     if (descInput.value.trim()) fd.append('description', descInput.value.trim());
     var token = (function () {
       try { return localStorage.getItem('bml_admin_token') || ''; }
@@ -337,13 +343,31 @@
         return body;
       });
     }).then(function (body) {
-      statusEl.textContent = 'Saved as ' + body.id;
+      var saved = (body.items || []).length;
+      var failed = (body.errors || []).length;
+      var parts = ['Saved ' + saved + ' item' + (saved === 1 ? '' : 's')];
+      if (failed) parts.push(failed + ' failed');
+      if (saved) {
+        var first = body.items[0];
+        parts.push('(first: ' + first.id + ')');
+      }
+      statusEl.textContent = parts.join(' · ');
       // Clear the form so a second upload doesn't accidentally re-send
-      // the same file.
+      // the same files.
       fileInput.value = '';
       nameInput.value = '';
       descInput.value = '';
-      toast('Uploaded "' + body.name + '"');
+      if (saved) {
+        toast('Uploaded ' + saved + ' curated item' + (saved === 1 ? '' : 's') +
+              (failed ? ' (' + failed + ' failed)' : ''));
+      }
+      if (failed) {
+        // Surface per-file failures so the admin can fix them and retry.
+        var msg = (body.errors || []).map(function (e) {
+          return e.filename + ': ' + e.error;
+        }).join('\n');
+        alert('Some files could not be parsed:\n\n' + msg);
+      }
       refreshCuratedList(true);
     }).catch(function (err) {
       statusEl.textContent = 'Upload failed: ' + (err && err.message ? err.message : err);

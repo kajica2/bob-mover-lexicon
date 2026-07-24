@@ -166,16 +166,17 @@
             <h4 style="margin-top:0">Upload .mxl</h4>
             <form id="curated-upload-form" class="curated-upload-form">
               <label class="composer-field">
-                <span class="label">Display name</span>
-                <input id="curated-name" class="input" placeholder="Autumn Leaves — head" required>
+                <span class="label">Display name <span class="muted" style="font-weight: normal;">(optional when uploading multiple files)</span></span>
+                <input id="curated-name" class="input" placeholder="Autumn Leaves — head">
               </label>
               <label class="composer-field">
                 <span class="label">Description (optional)</span>
                 <input id="curated-description" class="input" placeholder="A short note about this piece">
               </label>
               <label class="composer-field">
-                <span class="label">.mxl file</span>
-                <input id="curated-file" class="input" type="file" accept=".mxl,.xml,application/vnd.recordare.musicxml+xml" required>
+                <span class="label">.mxl file(s)</span>
+                <input id="curated-file" class="input" type="file" accept=".mxl,.xml,application/vnd.recordare.musicxml+xml" multiple required>
+                <small class="muted" style="margin-top: 2px;">Select one or more .mxl files. When uploading multiple, the Display name becomes a prefix and each file's name is appended.</small>
               </label>
               <div class="composer-row">
                 <button class="btn btn-primary" type="submit">Upload</button>
@@ -237,6 +238,6 @@
   <script src="etudes-server.js?v=41"></script>
   <script src="etudes-curriculum.js?v=41"></script>
   <script src="etudes-stitch.js?v=41"></script>
-  <script src="etudes.js?v=45"></script>
+  <script src="etudes.js?v=46"></script>
 </body>
 </html>

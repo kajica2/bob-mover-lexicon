@@ -1825,9 +1825,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         admin = self._require_admin()
         if not admin:
             return
-        # Multipart form-data: field 'file' (the .mxl) + 'name' (display
-        # label) + optional 'description'. The .mxl is parsed as a
-        # zip and the inner score XML is extracted + stored.
+        # Multipart form-data: one or more 'file' parts (.mxl) + 'name'
+        # (display label, used as a prefix for batch uploads) + optional
+        # 'description'. The .mxl is parsed as a zip and the inner
+        # score XML is extracted + stored. We support batch upload
+        # (`<input type="file" multiple>`) by accepting N 'file' parts
+        # in one request and creating one curated item per file.
         ctype = self.headers.get("Content-Type", "")
         if not ctype.startswith("multipart/form-data"):
             return self.send_json({"error": "Expected multipart/form-data"}, 400)
@@ -1835,34 +1838,73 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             fields = self._parse_multipart(ctype, self.rfile)
         except Exception as e:
             return self.send_json({"error": f"Failed to parse upload: {e}"}, 400)
-        file_field = fields.get("file")
-        if not file_field or not file_field.get("bytes"):
+        # 'file' is always a list (parser contract). Empty list =
+        # nothing was attached.
+        file_fields = fields.get("file") or []
+        file_fields = [f for f in file_fields if f.get("bytes")]
+        if not file_fields:
             return self.send_json({"error": "Missing 'file' field"}, 400)
-        name = (fields.get("name", {}).get("text") or "").strip()
-        if not name:
-            # default to the original filename minus the .mxl extension
-            orig = file_field.get("filename", "curated.mxl")
-            name = orig.rsplit(".", 1)[0]
-        description = (fields.get("description", {}).get("text") or "").strip() or None
-        original_filename = file_field.get("filename")
-        xml_text = self._extract_musicxml_from_upload(
-            file_field["bytes"], original_filename
-        )
-        if not xml_text:
-            return self.send_json(
-                {"error": "Could not find MusicXML inside the upload. "
-                          "Expected a .mxl zip with score.xml or a raw "
-                          "<score-partwise> XML file."},
-                400,
+        # 'name' and 'description' are also lists now but we only
+        # honour the first occurrence — they're scalar fields.
+        name_parts = fields.get("name") or []
+        desc_parts = fields.get("description") or []
+        base_name = (name_parts[0]["text"] if name_parts else "").strip()
+        description = (desc_parts[0]["text"] if desc_parts else "").strip() or None
+        # Build each item. Naming rules:
+        #   - single file, base_name provided: use base_name verbatim
+        #     (preserves the pre-batch-upload behaviour for the
+        #     common single-file case).
+        #   - single file, no base_name: use the file's basename.
+        #   - multiple files, base_name provided: prefix the basename
+        #     with "{base_name} — " so the batch stays grouped in the
+        #     library list and the per-file tail is greppable.
+        #   - multiple files, no base_name: use each file's basename.
+        items = []
+        errors = []
+        for i, file_field in enumerate(file_fields, start=1):
+            original_filename = file_field.get("filename") or f"file{i}.mxl"
+            xml_text = self._extract_musicxml_from_upload(
+                file_field["bytes"], original_filename
             )
-        new_id = db.create_curated_mxl(
-            name=name,
-            musicxml=xml_text,
-            description=description,
-            original_filename=original_filename,
-            uploaded_by=admin["id"],
-        )
-        return self.send_json({"ok": True, "id": new_id, "name": name})
+            if not xml_text:
+                errors.append({
+                    "filename": original_filename,
+                    "error": "Could not find MusicXML inside the upload. "
+                             "Expected a .mxl zip with score.xml or a raw "
+                             "<score-partwise> XML file.",
+                })
+                continue
+            file_basename = (
+                original_filename.rsplit(".", 1)[0]
+                if "." in original_filename else original_filename
+            )
+            if base_name:
+                if len(file_fields) == 1:
+                    item_name = base_name
+                else:
+                    item_name = base_name + " — " + file_basename
+            else:
+                item_name = file_basename
+            new_id = db.create_curated_mxl(
+                name=item_name,
+                musicxml=xml_text,
+                description=description,
+                original_filename=original_filename,
+                uploaded_by=admin["id"],
+            )
+            items.append({
+                "id": new_id,
+                "name": item_name,
+                "filename": original_filename,
+            })
+        if not items:
+            # Every file failed to parse — surface the per-file errors
+            # so the client can show which ones the user needs to fix.
+            return self.send_json({"error": "No files could be uploaded.", "errors": errors}, 400)
+        # If at least one item succeeded, return 200 with the list. The
+        # per-file errors live alongside so the client can show a
+        # warning for the ones that didn't make it.
+        return self.send_json({"ok": True, "items": items, "errors": errors})
 
     def handle_curated_delete(self, curated_id):
         admin = self._require_admin()
@@ -1910,14 +1952,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def _parse_multipart(self, content_type, rfile):
         """Tiny multipart/form-data parser for our upload form.
 
-        Returns a dict: { field_name: { 'filename': str|None,
-                                        'bytes': bytes|None,
-                                        'text':  str|None } }
+        Returns a dict: { field_name: [ { 'filename': str|None,
+                                            'bytes':   bytes|None,
+                                            'text':    str|None }, ... ] }
 
-        Only handles a single file per field, and the small subset of
-        MIME features we actually use (no nested parts, no
-        content-transfer-encoding other than binary). Plenty for
-        uploading a .mxl + a name + an optional description.
+        Field values are always lists — the same name may appear
+        multiple times (e.g. several `<input type="file" multiple>`
+        selections under one 'file' field), and even single uploads
+        come back as a one-element list. Callers should iterate the
+        list and read whichever slots they need.
+
+        Only handles the small subset of MIME features we actually
+        use (no nested parts, no content-transfer-encoding other
+        than binary). Plenty for uploading one or more .mxl files
+        alongside a name + an optional description.
         """
         # Parse boundary from the Content-Type header
         m = re.search(r"boundary=([^\s;]+)", content_type)
@@ -1957,11 +2005,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 continue
             field_name = cd_m.group(1)
             filename = cd_m.group(2) or None
-            out[field_name] = {
+            out.setdefault(field_name, []).append({
                 "filename": filename,
                 "bytes": payload if filename else None,
                 "text":  None if filename else payload.decode("utf-8", errors="replace"),
-            }
+            })
         return out
 
     def log_message(self, fmt, *args):
