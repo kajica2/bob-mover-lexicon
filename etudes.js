@@ -237,10 +237,17 @@
     practice.href = '/practice/?id=' + encodeURIComponent(et.id);
     practice.textContent = 'Practice';
 
+    var playMidi = document.createElement('a');
+    playMidi.className = 'btn-play-midi';
+    playMidi.href = '/practice/?id=' + encodeURIComponent(et.id) + '&play=1';
+    playMidi.textContent = 'Play MIDI';
+    playMidi.title = 'Open in Practice and auto-play';
+
     card.appendChild(info);
     card.appendChild(rename);
     card.appendChild(del);
     card.appendChild(practice);
+    card.appendChild(playMidi);
     return card;
   }
 
@@ -1749,6 +1756,12 @@
     practice.href = '/practice/?id=' + encodeURIComponent(et.id);
     practice.textContent = 'Practice';
 
+    const playMidi = document.createElement('a');
+    playMidi.className = 'btn-play-midi';
+    playMidi.href = '/practice/?id=' + encodeURIComponent(et.id) + '&play=1';
+    playMidi.textContent = 'Play MIDI';
+    playMidi.title = 'Open in Practice and auto-play';
+
     const rename = document.createElement('button');
     rename.className = 'btn btn-ghost btn-sm';
     rename.textContent = 'Rename';
@@ -1788,6 +1801,7 @@
     card.appendChild(dup);
     card.appendChild(del);
     card.appendChild(practice);
+    card.appendChild(playMidi);
     return card;
   }
 

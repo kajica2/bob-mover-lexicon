@@ -2017,6 +2017,22 @@
     renderQueue();
     renderTakesList();
     renderRangeIndicator();
+
+    // Auto-play hook: when the etudes page links here with ?play=1, kick
+    // the play button after the score has loaded. Strip the flag from the
+    // URL so a manual refresh doesn't keep re-firing it. We wait a tick
+    // for Verovio's SVG + the playback engine's note extraction to settle
+    // before clicking, otherwise the first run can race the score render.
+    const autoPlay = url.searchParams.get('play') === '1';
+    if (autoPlay) {
+      const cleanUrl = new URL(window.location);
+      cleanUrl.searchParams.delete('play');
+      window.history.replaceState({}, '', cleanUrl);
+      setTimeout(() => {
+        const playBtn = document.getElementById('btn-playback-play');
+        if (playBtn) playBtn.click();
+      }, 250);
+    }
   }
 
   // Mirror the persisted register range (set by the range-modal first-visit

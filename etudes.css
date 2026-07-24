@@ -771,6 +771,26 @@
 .etude-card .btn-practice:hover {
   background: var(--brass-600, #b88927);
 }
+/* "Play MIDI" — same shape as Practice but outlined/secondary, so the
+   primary brass action stays the navigation. Opens the practice page
+   with ?play=1 so it auto-starts the MIDI engine. */
+.etude-card .btn-play-midi {
+  background: transparent;
+  color: var(--brass-700, #8a6a1f);
+  border: 1px solid var(--brass-500, #c8a85a);
+  border-radius: 4px;
+  padding: 5px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-block;
+  margin-top: 4px;
+}
+.etude-card .btn-play-midi:hover {
+  background: rgba(200, 168, 90, 0.12);
+  color: var(--brass-800, #5a4612);
+}
 
 /* Empty / error states */
 .toast {
