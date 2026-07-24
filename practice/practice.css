@@ -119,7 +119,19 @@
   margin: 24px 0;
 }
 .score-container svg {
-  max-width: 100%;
+  /* Always fill the container width — the user wants the rendered
+   * score to match the original-PNG-from-the-book panel below it
+   * (which is also 100% wide). Previously this was `max-width: 100%`
+   * which only constrained the SVG from overflowing; with the
+   * default 50% zoom, the SVG would render at its natural Verovio
+   * size and look small relative to the wide container. `width: 100%`
+   * forces the SVG to always stretch to the container's full width
+   * while `height: auto` preserves the aspect ratio (so the score
+   * doesn't get distorted). The zoom controls still work — they
+   * increase Verovio's pageWidth/scale, so the rendered SVG is
+   * intrinsically bigger and the 100% width just stretches that
+   * bigger intrinsic size to the same container width. */
+  width: 100%;
   height: auto;
 }
 .score-loading {
@@ -440,7 +452,10 @@
   align-items: flex-start;
 }
 .fullpage-score svg {
-  max-width: 100%;
+  /* Same as .score-container svg — always fill the available
+   * width inside the full-page overlay. The container is the
+   * fullscreen viewport, so the score stretches edge to edge. */
+  width: 100%;
   height: auto;
 }
 
