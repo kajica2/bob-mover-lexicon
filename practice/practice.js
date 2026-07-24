@@ -1696,6 +1696,88 @@
       }
     }
 
+    // Re-clamp every note in the current score to the user's saved
+    // instrument range. Operates on state.rawXml (the post-cycle,
+    // post-transpose MusicXML currently rendered) — so the user's
+    // existing choices (transpose, cycle) are preserved and only
+    // out-of-range notes get shifted by whole octaves. The re-render
+    // also re-parses the score for playback, so the audio engine
+    // plays the in-range version.
+    //
+    // Edge cases:
+    //  - No exercise loaded: toast and bail.
+    //  - No range saved for the current instrument: fall back to
+    //    window.rangeInfo (the modal's active range), or to the
+    //    instrument's default preset if neither is set.
+    //  - Already in range: toast says so, no re-render (avoids
+    //    chewing the user's scroll position for a no-op).
+    //  - cycleToRange unavailable: toast an error (the etudes-stitch
+    //    script failed to load — should never happen in production
+    //    but defensive).
+    function commitToRange() {
+      if (!state.currentId) {
+        if (typeof toast === 'function') toast('Load an exercise first.', true);
+        return;
+      }
+      if (!state.rawXml) {
+        if (typeof toast === 'function') toast('No score loaded yet.', true);
+        return;
+      }
+      if (!window.etudesStitch || typeof window.etudesStitch.clampToRange !== 'function') {
+        if (typeof toast === 'function') toast('Range-clamp helper not loaded.', true);
+        return;
+      }
+      // Resolve the active range. Prefer the per-instrument
+      // effective range (falls back to the modal's stored range
+      // when the instrument has no saved preset).
+      const instr = (document.getElementById('instrument') || {}).value || 'concert';
+      let range = null;
+      if (typeof window.getEffectiveRange === 'function') {
+        const r = window.getEffectiveRange(instr);
+        if (r && typeof r.lowMidi === 'number' && typeof r.highMidi === 'number') {
+          range = { low: r.lowMidi, high: r.highMidi };
+        }
+      }
+      if (!range && window.rangeInfo && typeof window.rangeInfo.lowMidi === 'number') {
+        range = { low: window.rangeInfo.lowMidi, high: window.rangeInfo.highMidi };
+      }
+      if (!range) {
+        if (typeof toast === 'function') {
+          toast('No range set — open the range modal (top right) to pick one.', true);
+        }
+        return;
+      }
+      const before = (state.rawXml.match(/<note\b/g) || []).length;
+      const result = window.etudesStitch.clampToRange(state.rawXml, range.low, range.high);
+      if (!result || result.moved === 0) {
+        if (typeof toast === 'function') {
+          toast('All ' + before + ' notes already fit your range (' +
+                midiToName(range.low) + '–' + midiToName(range.high) + ').');
+        }
+        return;
+      }
+      // Re-render with the clamped XML. renderScore updates
+      // state.rawXml, re-parses for playback, and re-indexes the
+      // SVG note positions.
+      renderScore(result.xml);
+      if (typeof toast === 'function') {
+        toast('Shifted ' + result.moved + ' of ' + before +
+              ' note(s) into your range (' +
+              midiToName(range.low) + '–' + midiToName(range.high) + ').');
+      }
+    }
+
+    // Local midi→name helper for the toast text. Mirrors the one in
+    // etudes.js so the user sees a familiar name like "E3" instead
+    // of "MIDI 52". Returns "C-1" for the very bottom of MIDI; for
+    // any real horn range this is unreachable.
+    function midiToName(midi) {
+      const NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+      const pc = ((midi % 12) + 12) % 12;
+      const octave = Math.floor(midi / 12) - 1;
+      return NAMES[pc] + octave;
+    }
+
     async function applyCycle() {
       if (!state.currentId) {
         // No exercise loaded yet — just commit the staged values
@@ -1766,6 +1848,18 @@
     if (cycleApplyBtn) cycleApplyBtn.addEventListener('click', applyCycle);
     if (cycleModeSel) cycleModeSel.addEventListener('change', applyCycle);
     if (cycleBarsInp) cycleBarsInp.addEventListener('input', applyCycle);
+    // "Commit to range" button — re-clamps every note in the current
+    // score to the saved instrument range. Useful when a cycle (or a
+    // raw source MusicXML) has pushed notes out of the user's
+    // register. The server already clamps initial loads and cycle
+    // responses, so this is mostly a "force a re-fit" button — handy
+    // if the user has tightened their range in the modal after
+    // loading the score, or if the source XML is wider than expected.
+    // Uses the same clampToRange helper that the etudes page uses
+    // for in-browser stitching, so the result matches what the
+    // server would have produced.
+    const commitBtn = document.getElementById('btn-commit-range');
+    if (commitBtn) commitBtn.addEventListener('click', commitToRange);
     // Initial commit so the badge reflects the restored state
     applyCycle();
     updateBadge(state.cycleCommitted);
@@ -1906,5 +2000,29 @@
     document.addEventListener('DOMContentLoaded', init);
   } else {
     init();
+  }
+
+  // ===== Toast (lightweight status messages) =====
+  // The practice page has no global toast helper (only the etudes
+  // page does), so the "Commit to range" button and a few other
+  // inline actions show their result here. Mirrors the etudes-page
+  // toast style: dark pill at the bottom-centre, fades after 2.4s.
+  // The CSS lives in styles.css under the .practice-toast class
+  // (added so the etudes and practice pages can have different
+  // z-indexes — practice is inside the player panel which already
+  // has its own stacking context, so the toast needs to opt out
+  // with a high z-index).
+  function toast(msg, isError) {
+    let el = document.querySelector('.practice-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'practice-toast';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.toggle('error', !!isError);
+    el.classList.add('visible');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { el.classList.remove('visible'); }, 2400);
   }
 })();
