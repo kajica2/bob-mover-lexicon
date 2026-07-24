@@ -617,6 +617,28 @@
   color: #8b1f1f;
   border: 1px solid rgba(200, 80, 80, 0.40);
 }
+/* v38: "canonical" variant of the range badge. The canonical
+ * range is broader than any single instrument and acts as a
+ * curriculum data-integrity check — different visual from the
+ * user range badge (which is red/yellow when the user has a
+ * narrow instrument range) so the user can tell at a glance
+ * which one is the data check vs the instrument check. Uses
+ * the same green/red palette but with a thin purple accent
+ * border to match the master-class "brand" colour elsewhere
+ * in the etudes UI. */
+.mc-range-badge.canonical {
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+}
+.mc-range-badge.canonical.range-ok {
+  background: rgba(140, 80, 160, 0.10);
+  color: #5a2870;
+  border: 1px solid rgba(140, 80, 160, 0.40);
+}
+.mc-range-badge.canonical.range-bad {
+  background: rgba(200, 80, 80, 0.12);
+  color: #8b1f1f;
+  border: 1px solid rgba(200, 80, 80, 0.55);
+}
 /* Range warning panel (red) — shows the specific out-of-range notes
    and gives the user a one-click "auto-transpose" path. The warning
    is informational: the user can still save the etude as-is if they
@@ -632,6 +654,14 @@
   color: var(--ink-900, #1a1815);
 }
 .mc-range-warning strong { color: #8b1f1f; }
+.mc-range-warning.canonical-warning {
+  background: rgba(140, 80, 160, 0.08);
+  border: 1px solid rgba(140, 80, 160, 0.30);
+  border-left: 3px solid #5a2870;
+}
+.mc-range-warning.canonical-warning strong {
+  color: #5a2870;
+}
 .mc-range-warning ul {
   margin: 6px 0 0 0;
   padding-left: 20px;

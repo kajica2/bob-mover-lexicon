@@ -555,6 +555,23 @@
     return buildMasterClassEtude(etude, line, limit);
   }
 
+  // v38: canonical range for the Master Class curriculum. The
+  // user wants every generated etude to land within E3 (MIDI 52)
+  // and C6 (MIDI 84). This is broader than the typical instrument
+  // range (alto default is Ab2..E5) and acts as a curriculum
+  // data-integrity check: if any note falls outside this band,
+  // the etude is either too extreme to be a sensible practice
+  // exercise, or there's a transcription error in the curriculum
+  // data. Surfaced in the preview pane as a second "E3–C6" badge
+  // and (when violated) a warning panel. The save still proceeds
+  // — the warning is informational, not blocking, so the user can
+  // still study extreme registers on purpose.
+  //
+  // To widen or narrow this band later, edit the two MIDI values
+  // here. The validateEtudeNotes() function and the preview's
+  // range check both pull from this object.
+  const MC_CANONICAL_RANGE = { lowMidi: 52, highMidi: 84 };  // E3..C6
+
   // Walk a MusicXML string and replace every <pitch>...</pitch>
   // block with its simplest enharmonic spelling. Mirrors music21's
   // Pitch.simplifyEnharmonic: E#→F, B#→C, Fb→E, Cb→B, and so on.
@@ -823,5 +840,6 @@
     simplifyEnharmonicXml: simplifyEnharmonicXml,
     countPitchedNotes: countPitchedNotes,
     validateEtudeNotes: validateEtudeNotes,
+    MC_CANONICAL_RANGE: MC_CANONICAL_RANGE,
   };
 })();

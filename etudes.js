@@ -818,11 +818,23 @@
     // Range check against the user's saved instrument range.
     var rangeUsed = null;
     var currentReport = null;
+    // v38: also validate against the Master Class canonical range
+    // (E3..C6 by default — broader than any single instrument,
+    // acts as a curriculum data-integrity check). Both badges
+    // show in the preview header; both warnings show in the
+    // warning panel.
+    var canonicalRange = (window.etudesStitch && window.etudesStitch.MC_CANONICAL_RANGE)
+      ? window.etudesStitch.MC_CANONICAL_RANGE
+      : { lowMidi: 52, highMidi: 84 };
+    var currentCanonicalReport = null;
     try {
       rangeUsed = getEtudesRange();
       if (window.etudesStitch.validateEtudeNotes) {
         currentReport = window.etudesStitch.validateEtudeNotes(
           currentFullXml, rangeUsed.lowMidi, rangeUsed.highMidi
+        );
+        currentCanonicalReport = window.etudesStitch.validateEtudeNotes(
+          currentFullXml, canonicalRange.lowMidi, canonicalRange.highMidi
         );
       }
     } catch (e) {
@@ -843,11 +855,20 @@
     meta.className = 'mc-preview-meta';
     meta.innerHTML = '<strong>Preview</strong> · first 8 bars · ♩ = ' + etude.bpm;
     header.appendChild(meta);
-    // Range badge: green if all in range, red if any out. Filled in
-    // by the initial render and updated whenever the XML changes
-    // (e.g. after "Fix Enharmonics" rewrites a pitch).
+    // Two range badges in the header:
+    //   1. User range: "in range" / "X outside range" against the
+    //      saved instrument range (alto default Ab2..E5)
+    //   2. Canonical range: "E3–C6 ✓" / "E3–C6 ⚠ N" against the
+    //      Master Class canonical range (E3..C6 by default). The
+    //      canonical range is broader than any single instrument —
+    //      it acts as a curriculum data-integrity check: if a note
+    //      falls outside E3..C6, the etude is either too extreme
+    //      to be a sensible practice exercise, or there's a
+    //      transcription error in the curriculum data.
     var badge = document.createElement('span');
     header.appendChild(badge);
+    var canonicalBadge = document.createElement('span');
+    header.appendChild(canonicalBadge);
     function paintBadge(report) {
       if (!report) { badge.textContent = ''; badge.className = ''; return; }
       if (report.ok) {
@@ -864,7 +885,25 @@
                        midiToNoteName(rangeUsed.highMidi) + ').';
       }
     }
+    function paintCanonicalBadge(report) {
+      if (!report) { canonicalBadge.textContent = ''; canonicalBadge.className = ''; return; }
+      var lo = midiToNoteName(canonicalRange.lowMidi);
+      var hi = midiToNoteName(canonicalRange.highMidi);
+      if (report.ok) {
+        canonicalBadge.className = 'mc-range-badge range-ok canonical';
+        canonicalBadge.textContent = lo + '–' + hi + ' ✓';
+        canonicalBadge.title = 'Every note lands within the Master Class canonical range ' +
+                               '(' + lo + '–' + hi + ').';
+      } else {
+        canonicalBadge.className = 'mc-range-badge range-bad canonical';
+        canonicalBadge.textContent = lo + '–' + hi + ' ⚠ ' + report.outOfRange.length;
+        canonicalBadge.title = report.outOfRange.length + ' note(s) fall outside the Master Class ' +
+                               'canonical range (' + lo + '–' + hi + '). This usually means the ' +
+                               'curriculum data has a transcription error — please report it.';
+      }
+    }
     paintBadge(currentReport);
+    paintCanonicalBadge(currentCanonicalReport);
     box.appendChild(header);
 
     // Range warning panel (only when there are out-of-range notes).
@@ -874,35 +913,68 @@
     var warnContainer = document.createElement('div');
     warnContainer.className = 'mc-preview-warn-container';
     box.appendChild(warnContainer);
-    function paintWarnPanel(report) {
+    function paintWarnPanel() {
       warnContainer.innerHTML = '';
-      if (!report || report.ok || !report.outOfRange.length) return;
-      var warn = document.createElement('div');
-      warn.className = 'mc-range-warning';
-      var warnMsg = document.createElement('div');
-      warnMsg.innerHTML = '<strong>Out-of-range notes:</strong> ' +
-        report.outOfRange.length + ' note(s) fall outside your saved ' +
-        'instrument range. Use <em>Auto-transpose</em> to shift them ' +
-        'by whole octaves, or <em>Save as-is</em> to keep the original ' +
-        'pitches (useful for studying extreme registers).';
-      warn.appendChild(warnMsg);
-      var list = document.createElement('ul');
-      for (var i = 0; i < report.outOfRange.length; i++) {
-        var v = report.outOfRange[i];
-        var p = v.pitch;
-        var step = p.step;
-        if (p.alter === 1) step += '#';
-        else if (p.alter === -1) step += 'b';
-        var li = document.createElement('li');
-        li.textContent = 'bar ' + (v.measureIndex + 1) + ', ' + step + p.octave +
-                         ' (MIDI ' + v.midi + ', range ' +
-                         midiToNoteName(v.low) + '–' + midiToNoteName(v.high) + ')';
-        list.appendChild(li);
+      // User-range violations (existing behaviour).
+      if (currentReport && !currentReport.ok && currentReport.outOfRange.length) {
+        var warn = document.createElement('div');
+        warn.className = 'mc-range-warning';
+        var warnMsg = document.createElement('div');
+        warnMsg.innerHTML = '<strong>Out of your instrument range:</strong> ' +
+          currentReport.outOfRange.length + ' note(s) fall outside your saved ' +
+          'instrument range. Use <em>Auto-transpose</em> to shift them ' +
+          'by whole octaves, or <em>Save as-is</em> to keep the original ' +
+          'pitches (useful for studying extreme registers).';
+        warn.appendChild(warnMsg);
+        var list = document.createElement('ul');
+        for (var i = 0; i < currentReport.outOfRange.length; i++) {
+          var v = currentReport.outOfRange[i];
+          var p = v.pitch;
+          var step = p.step;
+          if (p.alter === 1) step += '#';
+          else if (p.alter === -1) step += 'b';
+          var li = document.createElement('li');
+          li.textContent = 'bar ' + (v.measureIndex + 1) + ', ' + step + p.octave +
+                           ' (MIDI ' + v.midi + ', range ' +
+                           midiToNoteName(v.low) + '–' + midiToNoteName(v.high) + ')';
+          list.appendChild(li);
+        }
+        warn.appendChild(list);
+        warnContainer.appendChild(warn);
       }
-      warn.appendChild(list);
-      warnContainer.appendChild(warn);
+      // Canonical-range violations (v38). Different severity from
+      // the user range — the canonical range represents the
+      // curriculum's intended register, so a violation is more
+      // likely a data error than a user preference. Shown in a
+      // second warning panel with a slightly different visual
+      // (canonical-warning class — see etudes.css).
+      if (currentCanonicalReport && !currentCanonicalReport.ok && currentCanonicalReport.outOfRange.length) {
+        var cwarn = document.createElement('div');
+        cwarn.className = 'mc-range-warning canonical-warning';
+        var cwarnMsg = document.createElement('div');
+        cwarnMsg.innerHTML = '<strong>Outside the Master Class canonical range (' +
+          midiToNoteName(canonicalRange.lowMidi) + '–' +
+          midiToNoteName(canonicalRange.highMidi) + '):</strong> ' +
+          currentCanonicalReport.outOfRange.length + ' note(s) fall outside the etude\'s intended register. ' +
+          'This usually means the curriculum data has a transcription error — please report it.';
+        cwarn.appendChild(cwarnMsg);
+        var clist = document.createElement('ul');
+        for (var j = 0; j < currentCanonicalReport.outOfRange.length; j++) {
+          var cv = currentCanonicalReport.outOfRange[j];
+          var cp = cv.pitch;
+          var cstep = cp.step;
+          if (cp.alter === 1) cstep += '#';
+          else if (cp.alter === -1) cstep += 'b';
+          var cli = document.createElement('li');
+          cli.textContent = 'bar ' + (cv.measureIndex + 1) + ', ' + cstep + cp.octave +
+                            ' (MIDI ' + cv.midi + ')';
+          clist.appendChild(cli);
+        }
+        cwarn.appendChild(clist);
+        warnContainer.appendChild(cwarn);
+      }
     }
-    paintWarnPanel(currentReport);
+    paintWarnPanel();
 
     // Verovio SVG of the first 8 bars.
     var svgWrap = document.createElement('div');
@@ -927,8 +999,12 @@
           currentReport = window.etudesStitch.validateEtudeNotes(
             currentFullXml, rangeUsed.lowMidi, rangeUsed.highMidi
           );
+          currentCanonicalReport = window.etudesStitch.validateEtudeNotes(
+            currentFullXml, canonicalRange.lowMidi, canonicalRange.highMidi
+          );
           paintBadge(currentReport);
-          paintWarnPanel(currentReport);
+          paintCanonicalBadge(currentCanonicalReport);
+          paintWarnPanel();
         }
       } catch (e) {
         console.warn('re-run range check failed:', e);
