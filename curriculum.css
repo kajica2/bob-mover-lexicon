@@ -1,0 +1,238 @@
+/* Long-form curriculum pages: practice routine, engraving rules,
+ * practice book. Self-contained styles so the parent styles.css
+ * stays clean and we can iterate on typography without churn.
+ *
+ * Design goals:
+ * - Comfortable reading width (max 900px) with generous line-height
+ * - Code blocks and solfeggio patterns render in monospace
+ * - Tables are full-width with thin borders and a subtle row hover
+ * - Headers have clear hierarchy: h1 is the page title, h2 is a major
+ *   section (often a time bracket in the practice routine), h3 is a
+ *   subsection, h4 is rarely used
+ * - Blockquotes render as indented italic for the MC source attributions
+ */
+
+.curriculum {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 0 64px 0;
+}
+
+.curriculum h1 {
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+  color: var(--ink-900, #1a1815);
+  line-height: 1.2;
+}
+
+.curriculum .lede {
+  font-size: 15px;
+  color: var(--ink-700, #4a4538);
+  margin: 0 0 32px 0;
+  font-style: italic;
+}
+
+.curriculum h2 {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 40px 0 12px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ink-200, #e0d9c8);
+  color: var(--ink-900, #1a1815);
+}
+
+.curriculum h3 {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 28px 0 10px 0;
+  color: var(--ink-900, #1a1815);
+}
+
+.curriculum h4 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 20px 0 8px 0;
+  color: var(--ink-800, #2a2620);
+}
+
+.curriculum p {
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0 0 14px 0;
+  color: var(--ink-800, #2a2620);
+}
+
+.curriculum p em {
+  color: var(--ink-700, #4a4538);
+}
+
+.curriculum blockquote {
+  margin: 16px 0 16px 0;
+  padding: 10px 16px;
+  background: var(--paper, #f8f5ef);
+  border-left: 3px solid var(--accent, #c8a85a);
+  font-style: italic;
+  color: var(--ink-700, #4a4538);
+}
+
+.curriculum ul,
+.curriculum ol {
+  margin: 0 0 16px 0;
+  padding-left: 24px;
+  line-height: 1.6;
+}
+
+.curriculum li {
+  font-size: 15px;
+  color: var(--ink-800, #2a2620);
+  margin-bottom: 4px;
+}
+
+.curriculum code {
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 13px;
+  padding: 1px 5px;
+  background: var(--ink-100, #f0eadc);
+  border-radius: 3px;
+  color: var(--ink-900, #1a1815);
+}
+
+.curriculum pre {
+  background: var(--ink-100, #f0eadc);
+  border: 1px solid var(--ink-200, #e0d9c8);
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin: 12px 0 16px 0;
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-900, #1a1815);
+  white-space: pre;
+}
+
+.curriculum table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0 22px 0;
+  font-size: 14px;
+}
+
+.curriculum th {
+  text-align: left;
+  padding: 8px 12px;
+  background: var(--ink-100, #f0eadc);
+  border-bottom: 2px solid var(--ink-300, #c8bfa8);
+  font-weight: 600;
+  color: var(--ink-900, #1a1815);
+}
+
+.curriculum td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ink-200, #e0d9c8);
+  color: var(--ink-800, #2a2620);
+  vertical-align: top;
+}
+
+.curriculum tr:hover td {
+  background: rgba(200, 168, 90, 0.05);
+}
+
+.curriculum hr {
+  border: 0;
+  border-top: 1px solid var(--ink-200, #e0d9c8);
+  margin: 32px 0;
+}
+
+.curriculum .muted {
+  color: var(--ink-700, #4a4538);
+  font-size: 14px;
+}
+
+.curriculum .source-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  margin-left: 6px;
+  background: rgba(140, 80, 160, 0.10);
+  color: #5a2870;
+  border: 1px solid rgba(140, 80, 160, 0.30);
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.curriculum .time-tag {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono, ui-monospace, 'SF Mono', Menlo, monospace);
+  padding: 2px 8px;
+  margin-right: 10px;
+  background: var(--ink-900, #1a1815);
+  color: var(--paper, #f8f5ef);
+  border-radius: 3px;
+  vertical-align: middle;
+}
+
+.curriculum .callout {
+  background: var(--paper, #f8f5ef);
+  border: 1px solid var(--ink-200, #e0d9c8);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 16px 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.curriculum .callout strong {
+  color: var(--ink-900, #1a1815);
+}
+
+/* Checkbox-style list used in the practice routine summary */
+.curriculum .checklist {
+  list-style: none;
+  padding-left: 0;
+}
+
+.curriculum .checklist li {
+  padding-left: 24px;
+  position: relative;
+  margin-bottom: 6px;
+}
+
+.curriculum .checklist li::before {
+  content: "☐";
+  position: absolute;
+  left: 0;
+  color: var(--accent, #c8a85a);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+/* Page hero — short tagline under the h1 */
+.curriculum .tagline {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent, #c8a85a);
+  margin: 0 0 8px 0;
+  padding: 0;
+}
+
+/* Responsive: shrink the heading sizes on narrow screens so the
+ * tables don't squish into a 4-column pile of unreadable text.
+ */
+@media (max-width: 640px) {
+  .curriculum h1 { font-size: 26px; }
+  .curriculum h2 { font-size: 20px; }
+  .curriculum h3 { font-size: 17px; }
+  .curriculum table { font-size: 13px; }
+  .curriculum pre { font-size: 12px; }
+}

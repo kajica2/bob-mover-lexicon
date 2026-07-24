@@ -60,8 +60,17 @@
   // ---------- Etude 1: Voice Leading & Target Notes ----------
   // II-V-I voice leading in C. Each line isolates ONE essential
   // voice-leading movement: 9→♯9→Maj7, 7→♭9→5, 7→♯11→9, 13→♭13→5.
-  // Plus a chromatic enclosure variation. Same shape: 3 bars, one per
-  // chord, 4/4, one whole note per chord.
+  // Plus a chromatic enclosure variation.
+  //
+  // Pitches and rhythm sourced from the music21 reference script
+  // (see the user's note in the etudes-curriculum source for the
+  // exact Python). Pitches land in the low-to-mid register (B3, G3,
+  // A3 as the resolutions) so the line is singable for vocal practice
+  // and sits in the chalumeau register of the alto sax. The ii and V
+  // tones are 2 tied eighths followed by a 3-beat rest (dotted half
+  // rest in the score), and the I resolution is held as a whole note —
+  // the "two tied eighth-notes leading to a long tone" pattern from
+  // the original instructions. Same shape: 3 bars, one per chord, 4/4.
   const MC1 = {
     id: 'mc-1-voice-leading',
     title: 'Voice Leading & Target Notes',
@@ -73,47 +82,87 @@
     lines: [
       {
         name: 'Line 1: 9 → ♯9 → Maj7',
-        description: 'E (9) → F (♯9) → B (Maj7). The colour-tone line.',
+        description: 'E (9) → F (♯9) → B3 (Maj7). The colour-tone line.',
         chords: [
-          { name: 'Dm7',   bars: [{ notes: [{ p: 'E4',  d: 4 }] }] },
-          { name: 'G7',    bars: [{ notes: [{ p: 'F4',  d: 4 }] }] },
-          { name: 'Cmaj7', bars: [{ notes: [{ p: 'B4',  d: 4 }] }] },
+          // Dm7: 2 tied eighths of E + dotted-half rest (3 beats)
+          { name: 'Dm7',   bars: [{ notes: [
+            { p: 'E4', d: 0.5 }, { p: 'E4', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          // G7: 2 tied eighths of F + dotted-half rest
+          { name: 'G7',    bars: [{ notes: [
+            { p: 'F4', d: 0.5 }, { p: 'F4', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          // Cmaj7: whole note B3 (the resolution, in the lower octave)
+          { name: 'Cmaj7', bars: [{ notes: [
+            { p: 'B3', d: 4 }
+          ]}]},
         ],
       },
       {
         name: 'Line 2: 7 → ♭9 → 5',
-        description: 'C (7) → D♭ (♭9) → G (5). The dominant-pull line.',
+        description: 'C (7) → D♭ (♭9) → G3 (5). The dominant-pull line.',
         chords: [
-          { name: 'Dm7',   bars: [{ notes: [{ p: 'C4',  d: 4 }] }] },
-          { name: 'G7',    bars: [{ notes: [{ p: 'Db4', d: 4 }] }] },
-          { name: 'Cmaj7', bars: [{ notes: [{ p: 'G4',  d: 4 }] }] },
+          { name: 'Dm7',   bars: [{ notes: [
+            { p: 'C4', d: 0.5 }, { p: 'C4', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          { name: 'G7',    bars: [{ notes: [
+            { p: 'Db4', d: 0.5 }, { p: 'Db4', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          { name: 'Cmaj7', bars: [{ notes: [
+            { p: 'G3', d: 4 }
+          ]}]},
         ],
       },
       {
         name: 'Line 3: 7 → ♯11 → 9',
-        description: 'C (7) → C♯ (♯11) → D (9). The Lydian-shift line.',
+        description: 'C (7) → C♯ (♯11) → D4 (9). The Lydian-shift line.',
         chords: [
-          { name: 'Dm7',   bars: [{ notes: [{ p: 'C4',  d: 4 }] }] },
-          { name: 'G7',    bars: [{ notes: [{ p: 'C#4', d: 4 }] }] },
-          { name: 'Cmaj7', bars: [{ notes: [{ p: 'D4',  d: 4 }] }] },
+          { name: 'Dm7',   bars: [{ notes: [
+            { p: 'C4', d: 0.5 }, { p: 'C4', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          { name: 'G7',    bars: [{ notes: [
+            { p: 'C#4', d: 0.5 }, { p: 'C#4', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          { name: 'Cmaj7', bars: [{ notes: [
+            { p: 'D4', d: 4 }
+          ]}]},
         ],
       },
       {
         name: 'Line 4: 13 → ♭13 → 5',
-        description: 'A (13) → A♭ (♭13) → G (5). The bop-register line.',
+        description: 'A3 (13) → A♭3 (♭13) → G3 (5). The bop-register line.',
         chords: [
-          { name: 'Dm7',   bars: [{ notes: [{ p: 'A4',  d: 4 }] }] },
-          { name: 'G7',    bars: [{ notes: [{ p: 'Ab4', d: 4 }] }] },
-          { name: 'Cmaj7', bars: [{ notes: [{ p: 'G4',  d: 4 }] }] },
+          { name: 'Dm7',   bars: [{ notes: [
+            { p: 'A3', d: 0.5 }, { p: 'A3', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          { name: 'G7',    bars: [{ notes: [
+            { p: 'Ab3', d: 0.5 }, { p: 'Ab3', d: 0.5 }, { p: null, d: 3 }
+          ]}]},
+          { name: 'Cmaj7', bars: [{ notes: [
+            { p: 'G3', d: 4 }
+          ]}]},
         ],
       },
       {
         name: 'Variation: Chromatic Enclosure (MC 22)',
-        description: 'E → F → [C → B♭] → B. Enclose the target from a half-step above and below.',
+        description: 'E → F → [C → B♭] → B3. Enclose the target from a half-step above and below.',
         chords: [
-          { name: 'Dm7',   bars: [{ notes: [{ p: 'E4',  d: 4 }] }] },
-          { name: 'G7',    bars: [{ notes: [{ p: 'F4',  d: 2 }, { p: 'C5',  d: 1 }, { p: 'Bb4', d: 1 }] }] },
-          { name: 'Cmaj7', bars: [{ notes: [{ p: 'B4',  d: 4 }] }] },
+          // Dm7: quarter E + 3-beat rest (simpler rhythm than the
+          // tied-eighths pattern in the main lines; the enclosure
+          // happens on the V chord, not the ii).
+          { name: 'Dm7',   bars: [{ notes: [
+            { p: 'E4', d: 1 }, { p: null, d: 3 }
+          ]}]},
+          // G7: quarter F + quarter C + quarter B♭ + quarter rest
+          // (= 4 beats; the C and B♭ enclose the target B from
+          // a half-step above and below).
+          { name: 'G7',    bars: [{ notes: [
+            { p: 'F4', d: 1 }, { p: 'C4', d: 1 }, { p: 'Bb3', d: 1 }, { p: null, d: 1 }
+          ]}]},
+          // Cmaj7: half note B3 (the resolution, held).
+          { name: 'Cmaj7', bars: [{ notes: [
+            { p: 'B3', d: 2 }, { p: null, d: 2 }
+          ]}]},
         ],
       },
     ],
