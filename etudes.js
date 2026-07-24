@@ -48,6 +48,57 @@
     });
   }
 
+  // ---------- Favorites ----------
+  // The browse page (app.js) writes the user's starred exercise ids to
+  // localStorage['jazz_lex_favorites'] as a JSON-encoded array. The
+  // etudes page reads from the same key so the user's favorites show
+  // up here too — no migration, no separate store. A
+  // "★ Favorites" pseudo-section is prepended to the SECTION dropdowns
+  // in both Composer and Generator modes; selecting it filters the
+  // exercise list to the starred set. Each row in the composer list
+  // has a star toggle (.ex-fav) so the user can add or remove
+  // favorites without leaving the etudes page.
+  var FAV_SECTION_ID = '__favorites__';
+  function getFavorites() {
+    try {
+      var raw = localStorage.getItem('jazz_lex_favorites');
+      if (!raw) return new Set();
+      var arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return new Set();
+      return new Set(arr.filter(function (x) { return Number.isFinite(x); }));
+    } catch (e) {
+      return new Set();
+    }
+  }
+  function persistFavorites(favSet) {
+    try {
+      localStorage.setItem('jazz_lex_favorites', JSON.stringify([...favSet]));
+    } catch (e) { /* localStorage unavailable — non-fatal */ }
+  }
+  function toggleFavorite(id) {
+    var fav = getFavorites();
+    if (fav.has(id)) fav.delete(id);
+    else fav.add(id);
+    persistFavorites(fav);
+  }
+  // After a star is toggled, the dropdown label "(N)" needs to update
+  // so the user sees the new count. Cheap: walk both SELECTs and
+  // rewrite the option text.
+  function refreshFavoritesDropdownText() {
+    var favCount = getFavorites().size;
+    var label = '★ Favorites (' + favCount + ')';
+    ['composer-section', 'random-section'].forEach(function (selId) {
+      var sel = document.getElementById(selId);
+      if (!sel) return;
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === FAV_SECTION_ID) {
+          sel.options[i].textContent = label;
+          break;
+        }
+      }
+    });
+  }
+
   // Lazy-load Verovio (11MB) only when the user actually opens the
   // Pattern Library tab and clicks Generate. The script is fetched once
   // and cached on `window.verovio`. Resolves to the toolkit constructor.
@@ -105,7 +156,16 @@
   function populateComposerSection() {
     const sel = document.getElementById('composer-section');
     sel.innerHTML = '';
-    Object.keys(state.exercisesBySection).sort().forEach(function (sec) {
+    // Favorites pseudo-section at the top — prepended so the user
+    // always sees their starred set as a first-class option. Count
+    // comes from localStorage (same key the browse page writes to).
+    var favCount = getFavorites().size;
+    var favOpt = document.createElement('option');
+    favOpt.value = FAV_SECTION_ID;
+    favOpt.textContent = '★ Favorites (' + favCount + ')';
+    sel.appendChild(favOpt);
+    var realKeys = Object.keys(state.exercisesBySection).sort();
+    realKeys.forEach(function (sec) {
       const exs = state.exercisesBySection[sec];
       const name = exs[0].section_name || sec;
       const opt = document.createElement('option');
@@ -113,14 +173,32 @@
       opt.textContent = sec + ' · ' + name + ' (' + exs.length + ')';
       sel.appendChild(opt);
     });
-    state.composer.section = sel.value;
+    // Default: select the first real section (skip Favorites on first
+    // load — the user hasn't asked to see favorites yet). If the
+    // user has already chosen a section, restore that choice.
+    if (!state.composer.section) {
+      sel.value = realKeys[0] || FAV_SECTION_ID;
+      state.composer.section = sel.value;
+    } else {
+      sel.value = state.composer.section;
+    }
   }
 
   function renderComposer() {
     const list = document.getElementById('composer-exercises');
     list.innerHTML = '';
     const sec = state.composer.section;
-    const all = state.exercisesBySection[sec] || [];
+    // Favorites pseudo-section: the source pool is the user's
+    // starred exercises (from localStorage) instead of a fixed
+    // section. Empty when the user hasn't starred anything yet —
+    // show a "no favorites" hint instead of an empty list.
+    let all;
+    if (sec === FAV_SECTION_ID) {
+      const fav = getFavorites();
+      all = state.exercises.filter(function (e) { return fav.has(e.id); });
+    } else {
+      all = state.exercisesBySection[sec] || [];
+    }
     const filter = state.composer.filter.toLowerCase();
     const filtered = filter
       ? all.filter(function (e) {
@@ -136,13 +214,46 @@
     // the current section or filter.
     const rows = filtered;
 
-    document.getElementById('composer-list-summary').textContent =
-      filtered.length + ' of ' + all.length + ' in this section';
+    // Summary line — shows the current pool size + filter result. In
+    // the Favorites section, show "X favorited of 407 total" so the
+    // user knows the absolute count.
+    if (sec === FAV_SECTION_ID) {
+      document.getElementById('composer-list-summary').textContent =
+        filtered.length + ' of ' + all.length + ' favorited' +
+        (filtered.length !== all.length ? ' (filtered)' : '');
+    } else {
+      document.getElementById('composer-list-summary').textContent =
+        filtered.length + ' of ' + all.length + ' in this section';
+    }
+
+    // Empty state — different message for the Favorites section
+    // (point the user to the browse page to star exercises) vs an
+    // empty section (e.g. a section with no exercises, which
+    // shouldn't happen but guard anyway).
+    if (rows.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'composer-list-empty muted';
+      if (sec === FAV_SECTION_ID) {
+        empty.innerHTML = 'No favorites yet — star exercises on the <a href="./">Browse</a> page, ' +
+          'or click the ☆ next to any exercise here to add it.';
+      } else if (filter) {
+        empty.textContent = 'No exercises match "' + filter + '".';
+      } else {
+        empty.textContent = 'No exercises in this section.';
+      }
+      list.appendChild(empty);
+      renderSelectedPanel();
+      updateComposerCount();
+      return;
+    }
+
+    const favSet = getFavorites();
 
     rows.forEach(function (entry) {
       const isSelected = entry.id in selectedIds;
       const transposeVal = isSelected ? (selectedIds[entry.id].semitones || 0) : 0;
       const ex = state.exercises.filter(function (e) { return e.id === entry.id; })[0] || entry;
+      const isFav = favSet.has(ex.id);
 
       const row = document.createElement('div');
       row.className = 'composer-ex-row' + (isSelected ? ' selected' : '');
@@ -168,6 +279,27 @@
       const titleCell = document.createElement('span');
       titleCell.className = 'ex-title';
       titleCell.textContent = ex.title || '';
+
+      // Star button — toggles this exercise in/out of the user's
+      // favorites (localStorage 'jazz_lex_favorites', same key the
+      // browse page writes to). The filled ★ marks a starred
+      // exercise; the empty ☆ marks an unstarred one. When the
+      // current section is "Favorites", toggling off here will
+      // remove the row from the list (handled by re-rendering
+      // below). The button stops click propagation so clicking
+      // the star doesn't also trigger the row's other handlers.
+      const starBtn = document.createElement('button');
+      starBtn.className = 'ex-fav' + (isFav ? ' favorited' : '');
+      starBtn.type = 'button';
+      starBtn.textContent = isFav ? '★' : '☆';
+      starBtn.title = isFav ? 'Remove from favorites' : 'Add to favorites';
+      starBtn.setAttribute('aria-label', starBtn.title);
+      starBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        toggleFavorite(ex.id);
+        refreshFavoritesDropdownText();
+        renderComposer();
+      });
 
       const transposeInput = document.createElement('input');
       transposeInput.type = 'number';
@@ -195,6 +327,7 @@
       row.appendChild(checkbox);
       row.appendChild(idCell);
       row.appendChild(titleCell);
+      row.appendChild(starBtn);
       row.appendChild(transposeInput);
       row.appendChild(removeBtn);
       list.appendChild(row);
@@ -484,6 +617,15 @@
   function populateRandomSection() {
     const sel = document.getElementById('random-section');
     sel.innerHTML = '';
+    // Favorites pseudo-section at the top (same logic as the
+    // Composer dropdown). When selected, the random picker draws
+    // from the user's starred exercises instead of a fixed
+    // section.
+    var favCount = getFavorites().size;
+    var favOpt = document.createElement('option');
+    favOpt.value = FAV_SECTION_ID;
+    favOpt.textContent = '★ Favorites (' + favCount + ')';
+    sel.appendChild(favOpt);
     Object.keys(state.exercisesBySection).sort().forEach(function (sec) {
       const exs = state.exercisesBySection[sec];
       const name = exs[0].section_name || sec;
@@ -539,7 +681,22 @@
     const section = document.getElementById('random-section').value;
     const count = parseInt(document.getElementById('random-count').value, 10);
     const spread = parseInt(document.getElementById('random-spread').value, 10);
-    const pool = state.exercisesBySection[section] || [];
+    // Favorites pseudo-section: the random pool is the user's starred
+    // exercises, not a fixed section. Falls through to the same
+    // dedupe + spread logic below.
+    let pool;
+    if (section === FAV_SECTION_ID) {
+      const fav = getFavorites();
+      pool = state.exercises.filter(function (e) { return fav.has(e.id); });
+    } else {
+      pool = state.exercisesBySection[section] || [];
+    }
+    if (pool.length === 0) {
+      toast(section === FAV_SECTION_ID
+        ? 'No favorites yet — star exercises on the Browse page first.'
+        : 'This section has no exercises.', true);
+      return;
+    }
     if (pool.length < count) {
       toast('Section only has ' + pool.length + ' exercises — pick fewer or another section.', true);
       return;

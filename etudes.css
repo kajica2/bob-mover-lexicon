@@ -252,7 +252,13 @@
 }
 .composer-ex-row {
   display: grid;
-  grid-template-columns: 28px 60px 1fr 90px 24px;
+  /* 7 columns to match the 7 children now in each row: drag-handle,
+   * checkbox, #id, title (1fr), star (favorites toggle), transpose,
+   * remove. The previous template had 5 columns for 6 children
+   * which squeezed the title into 90px (it wrapped to 3 lines) and
+   * pushed the remove button onto a new row — a long-standing
+   * visual bug fixed at the same time as adding the star. */
+  grid-template-columns: 28px 24px 56px 1fr 24px 80px 24px;
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
@@ -281,9 +287,12 @@
 }
 .composer-ex-row .ex-title {
   color: var(--ink-900, #1a1815);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .composer-ex-row .ex-transpose {
-  width: 80px;
+  width: 70px;
   padding: 4px 6px;
   border: 1px solid var(--ink-200, #e0d9c8);
   border-radius: 4px;
@@ -302,6 +311,46 @@
 }
 .composer-ex-row .ex-remove:hover {
   color: #a43232;
+}
+/* Star / favorites toggle on each composer-ex-row. The ★ marks a
+ * favorited exercise (same key localStorage['jazz_lex_favorites']
+ * that the browse page writes to), the ☆ marks an unstarred one.
+ * Subtle hover/active states — the button should feel light enough
+ * to use freely without distracting from the row content. */
+.composer-ex-row .ex-fav {
+  border: none;
+  background: transparent;
+  color: var(--ink-300, #b0a890);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 0;
+  cursor: pointer;
+  border-radius: 3px;
+  text-align: center;
+  transition: color 100ms, background 100ms;
+}
+.composer-ex-row .ex-fav:hover {
+  color: #b88927;
+  background: rgba(200, 168, 90, 0.10);
+}
+.composer-ex-row .ex-fav.favorited {
+  color: #b88927;
+}
+.composer-ex-row .ex-fav.favorited:hover {
+  color: #8a2424;
+}
+/* Empty state shown when the composer list is filtered to zero
+ * rows (e.g. the Favorites section is selected but the user hasn't
+ * starred anything yet, or a search filter matches no titles). */
+.composer-list-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-500, #7a7264);
+}
+.composer-list-empty a {
+  color: var(--brass-600, #b88927);
+  text-decoration: underline;
 }
 
 /* Random mode preview */
