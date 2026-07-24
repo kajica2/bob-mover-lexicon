@@ -6,9 +6,18 @@
  * one <clef> on the first measure).
  *
  * Operations:
- *   1. fetchSource(id)            — fetch and unwrap a single exercise
- *   2. transpose(xml, semitones) — shift every <pitch> by N semitones
- *   3. stitch(parts, name)       — concatenate multiple parts into one,
+ *   1. fetchSource(id)            -- fetch and unwrap a single exercise
+ *   2. transpose(xml, semitones) -- shift every <pitch> by N semitones
+ *   3. respellInKey(xml, fifths) -- re-spell every <pitch> to match the
+ *                                   new key signature (so the user sees
+ *                                   "F major" instead of "C major with
+ *                                   every note F#-accidented"); also
+ *                                   strips now-redundant explicit alters
+ *                                   that the key sig would have provided.
+ *   4. injectKeySignature(xml, N) -- add <key><fifths>N</fifths></key> to
+ *                                   the first measure's <attributes>
+ *                                   block (creating the block if needed).
+ *   5. stitch(parts, name)       -- concatenate multiple parts into one,
  *                                   merging measures into a single <part>,
  *                                   rewriting <work-title>, dropping extra
  *                                   <print> elements, inserting light
@@ -19,10 +28,13 @@
  * one part with N*measures from each source.
  *
  * Scope: treble clef, single voice per exercise, free-rhythm notation.
- * Doesn't yet handle: multi-voice sources (collapses to voice 1),
- * key-signature preservation across segments (Audiveris output for these
- * exercises has no <key> elements so this is moot), time-signature
- * joining (the Lexicon is free-rhythm, no <time> elements).
+ * Doesn't yet handle: multi-voice sources (collapses to voice 1), or
+ * per-measure key signatures when the etude mixes transpositions (the
+ * etude's key is taken from the first part; segments at a different
+ * transposition will be in the wrong key visually -- the pitches are
+ * still correct, the user just sees accidentals that don't match a
+ * real key). time-signature joining is also a no-op (the Lexicon is
+ * free-rhythm, no <time> elements).
  */
 (function () {
   'use strict';
@@ -82,6 +94,163 @@
     );
   }
 
+  // Map a semitone offset (mod 12) to a key-signature <fifths> value.
+  // We use the conventional flat-side keys for the 1-6 semitone range
+  // (Db, Eb, F, Gb/F# written as Gb, Ab, Bb) so the etude lands in the
+  // most-readable key for each transposition amount. The result is a
+  // number in [-7, 7] suitable for <fifths>.
+  //   0 -> C(0)   1 -> Db(-5) 2 -> D(2)   3 -> Eb(-3) 4 -> E(4)
+  //   5 -> F(-1)  6 -> Gb(-6) 7 -> G(1)   8 -> Ab(-4) 9 -> A(3)
+  //  10 -> Bb(-2) 11 -> B(5)
+  const SEMITONES_TO_FIFTHS = { 0:0, 1:-5, 2:2, 3:-3, 4:4, 5:-1, 6:-6, 7:1, 8:-4, 9:3, 10:-2, 11:5 };
+  function getKeyFifths(semitones) {
+    if (!semitones) return 0;
+    return SEMITONES_TO_FIFTHS[((semitones % 12) + 12) % 12];
+  }
+
+  // Map a key-signature <fifths> value to the set of letters it affects
+  // (positive for sharps, negative for flats). Returns { 'F': 1, ... }.
+  const SHARP_LETTER_ORDER = ['F', 'C', 'G', 'D', 'A', 'E', 'B'];
+  const FLAT_LETTER_ORDER = ['B', 'E', 'A', 'D', 'G', 'C', 'F'];
+  function getKeyLetterAlters(fifths) {
+    const letters = {};
+    if (fifths > 0) {
+      for (let i = 0; i < fifths && i < SHARP_LETTER_ORDER.length; i++) {
+        letters[SHARP_LETTER_ORDER[i]] = 1;
+      }
+    } else if (fifths < 0) {
+      for (let i = 0; i < -fifths && i < FLAT_LETTER_ORDER.length; i++) {
+        letters[FLAT_LETTER_ORDER[i]] = -1;
+      }
+    }
+    return letters;
+  }
+
+  // Re-spell every <pitch> in an XML string for the given key signature.
+  // Walks each pitch, computes the MIDI, then picks the most appropriate
+  // (step, alter, octave) for the new key. The scoring prefers:
+  //   1. pitches that the key sig provides "for free" (no explicit alter
+  //      needed in the XML -- the renderer applies the key sig)
+  //   2. the same letter as the original (so a "B natural" stays spelled
+  //      as B, with a natural sign if the new key sig has Bb)
+  //   3. preserving the direction of any original alteration (a "raised
+  //      note" stays a sharp, a "lowered note" stays a flat)
+  //   4. the same octave as the original
+  //   5. for chromatic notes, the spelling that matches the key's
+  //      general direction (flats in flat keys, sharps in sharp keys)
+  // Returns a new XML string. Non-pitch elements are untouched.
+  function respellInKey(xml, fifths) {
+    if (!xml) return xml;
+    const keyAlters = getKeyLetterAlters(fifths);
+    const useFlat = fifths < 0;
+    return xml.replace(/<pitch\b[^>]*>([\s\S]*?)<\/pitch>/g, function (fullMatch, body) {
+      const stepM = /<step>\s*([A-Ga-g][#b]?)\s*<\/step>/.exec(body);
+      const octM = /<octave>\s*(-?\d+)\s*<\/octave>/.exec(body);
+      if (!stepM || !octM) return fullMatch;
+      const step = stepM[1].charAt(0).toUpperCase();
+      const octave = parseInt(octM[1], 10);
+      const altM = /<alter>\s*(-?\d+)\s*<\/alter>/.exec(body);
+      const oldAlter = altM ? parseInt(altM[1], 10) : 0;
+      const oldMidi = pitchToMidi(step, oldAlter, octave);
+      // Try every letter at up to 3 octaves (target, target-1, target+1)
+      // and pick the highest-scoring spelling.
+      const targetOct = Math.floor(oldMidi / 12) - 1;
+      let best = null, bestScore = -1;
+      const letters = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+      for (let li = 0; li < letters.length; li++) {
+        const letter = letters[li];
+        for (let od = -1; od <= 1; od++) {
+          const tryOct = targetOct + od;
+          const natMidi = pitchToMidi(letter, 0, tryOct);
+          const explicitAlter = oldMidi - natMidi;
+          if (explicitAlter < -2 || explicitAlter > 2) continue;
+          const keyAlter = keyAlters[letter] || 0;
+          let score = 0;
+          // 1. Key-sig-provided pitch: emit no alter tag at all. This is
+          //    the most-desired outcome -- the renderer draws the natural
+          //    accidental from the key signature.
+          if (explicitAlter === keyAlter) score += 100;
+          // 2. Preserve the original letter (so B natural stays B, not Cb).
+          if (letter === step) score += 20;
+          // 3. Preserve the direction of any alteration.
+          if (oldAlter !== 0 && Math.sign(explicitAlter) === Math.sign(oldAlter)) {
+            score += 8;
+          }
+          if (oldAlter === 0 && explicitAlter === 0 && keyAlter === 0) {
+            score += 8;
+          }
+          // 4. Diatonic alterations (single sharp/flat) are more conventional.
+          if (Math.abs(explicitAlter) <= 1) score += 3;
+          // 5. Same octave.
+          if (od === 0) score += 2;
+          // 6. For chromatic alterations, match the key's general direction.
+          if (explicitAlter !== 0) {
+            if (useFlat && explicitAlter < 0) score += 2;
+            if (!useFlat && explicitAlter > 0) score += 2;
+          }
+          // Penalty: octave-displaced candidates are visually weird.
+          if (od !== 0) score -= 5;
+          if (best === null || score > bestScore) {
+            best = { letter: letter, explicitAlter: explicitAlter, keyAlter: keyAlter,
+                     score: score, octave: tryOct };
+            bestScore = score;
+          }
+        }
+      }
+      if (!best) return fullMatch;  // no valid spelling, leave the pitch alone
+      // Build the new <pitch> block. If the key sig naturally provides the
+      // pitch, omit the <alter> tag entirely so we don't duplicate the
+      // accidental on the staff.
+      let newBody = '<step>' + best.letter + '</step>';
+      if (best.explicitAlter !== best.keyAlter) {
+        newBody += '<alter>' + best.explicitAlter + '</alter>';
+      }
+      newBody += '<octave>' + best.octave + '</octave>';
+      return '<pitch>' + newBody + '</pitch>';
+    });
+  }
+
+  // Add a <key><fifths>N</fifths></key> element to the first measure's
+  // <attributes> block. If no <attributes> block exists, create one with
+  // a minimal <divisions>1</divisions> so the key is legal. The canonical
+  // MusicXML order inside <attributes> is: <divisions>, <key>, <time>,
+  // <clef>, so we insert <key> right after <divisions> if present.
+  function injectKeySignature(xml, fifths) {
+    if (!xml) return xml;
+    const keyTag = '<key><fifths>' + fifths + '</fifths></key>';
+    // Look for an existing <attributes> on the first measure
+    const firstAttrsM = xml.match(/<measure[^>]*>([\s\S]*?)<attributes>/);
+    if (firstAttrsM) {
+      // Insert <key> after <divisions> if present, else after <attributes>
+      return xml.replace(
+        /<attributes>([\s\S]*?)<\/attributes>/,
+        function (fullAttrs, inner) {
+          // If a <key> already exists, replace it
+          if (/<key>[\s\S]*?<\/key>/.test(inner)) {
+            return fullAttrs.replace(/<key>[\s\S]*?<\/key>/, keyTag);
+          }
+          const divM = /(<divisions>[\s\S]*?<\/divisions>)/.exec(inner);
+          if (divM) {
+            return fullAttrs.replace(divM[1], divM[1] + keyTag);
+          }
+          return fullAttrs.replace('<attributes>', '<attributes>' + keyTag);
+        }
+      );
+    }
+    // No <attributes> block on the first measure. Create one inside the
+    // first <measure>, before the first <note> (or at the end of the
+    // measure body if no <note>). Use <divisions>1</divisions> as a
+    // safe default -- Verovio and most renderers are happy with this.
+    const divTag = '<divisions>1</divisions>';
+    const attrsBlock = '<attributes>' + divTag + keyTag + '</attributes>';
+    return xml.replace(
+      /<measure([^>]*)>([\s\S]*?)(<note\b)/,
+      function (fullMatch, measureAttrs, bodyPrefix, firstNote) {
+        return '<measure' + measureAttrs + '>' + bodyPrefix + attrsBlock + firstNote;
+      }
+    );
+  }
+
   // Fetch + unwrap a single exercise's MusicXML. The server returns the
   // <score-partwise> root element directly.
   async function fetchSource(exerciseId, semitones) {
@@ -90,11 +259,18 @@
     const r = await fetch(url);
     if (!r.ok) throw new Error('Failed to fetch ex ' + exerciseId + ': HTTP ' + r.status);
     let xml = await r.text();
-    if (semitones) xml = transposePitch(xml, semitones);
+    if (semitones) {
+      xml = transposePitch(xml, semitones);
+      // After transposing, re-spell every pitch so the notation matches
+      // the new key. Without this, the user sees "C major transposed to
+      // F" as a stream of explicit sharp/flat accidentals on every note
+      // that should be in the F-major key signature.
+      xml = respellInKey(xml, getKeyFifths(semitones));
+    }
     // v31: strip <harmony> elements (chord symbols). The server injects
     // them on the served MusicXML for the practice page (so the player
     // sees the chord progression while practicing), but the etude
-    // generator doesn't want them — an etude stitches many sources and
+    // generator doesn't want them -- an etude stitches many sources and
     // the chord labels from one source would be misleading on the next
     // (different key, different progression). Drop all of them here.
     xml = xml.replace(/<harmony>[\s\S]*?<\/harmony>/g, '');
@@ -186,7 +362,7 @@
       const cleaned = stripPrintElements(stripWorkBlock(xml));
       const measures = extractMeasures(cleaned);
       if (!measures.length) continue;
-      // Strip any <barline> from inside each measure — they're end-of-
+      // Strip any <barline> from inside each measure -- they're end-of-
       // measure markers that confuse the layout when measures are stitched.
       for (let j = 0; j < measures.length; j++) {
         measures[j] = measures[j].replace(/<barline\b[^>]*>[\s\S]*?<\/barline>/g, '');
@@ -194,7 +370,7 @@
       // v29: time signatures are preserved as-is. The Bob Mover Lexicon
       // doesn't emit <time> elements (it's "free-rhythm"), but if a
       // future source has one, it passes through unchanged. We never
-      // synthesise, rewrite, or normalise time signatures here — that
+      // synthesise, rewrite, or normalise time signatures here -- that
       // would silently change the feel of the source. If the user
       // wants a uniform time signature across an etude whose sources
       // disagree, that should be a deliberate step (e.g. a separate
@@ -215,7 +391,7 @@
     // Compose the new <part> with a single id. We replace the original
     // <part id="P1">...</part> contents (between </identification>-
     // <defaults>-<part-list> on the front and </score-partwise> on the
-    // end) — but easier: keep the prefix up to and including <part-list>,
+    // end) -- but easier: keep the prefix up to and including <part-list>,
     // then emit one stitched <part>, then </score-partwise>.
     // We strip <work> from firstSrc BEFORE extracting the prefix so the
     // server-injected title (e.g. "Chromatic · #17") doesn't leak through;
@@ -237,8 +413,19 @@
       '$1' + workBlock
     );
 
+    // Inject a key signature on the first measure so the etude shows
+    // the new key instead of "C major with every note accidental'd".
+    // We use the first part's semitones as the canonical transposition
+    // for the whole etude. When the etude mixes transpositions, segments
+    // at a different transposition will still be in the right pitch but
+    // the user will see the first segment's key sig applied across the
+    // whole etude -- slightly imperfect but a much smaller "strange
+    // accidentals" problem than the previous no-key-sig behavior.
+    const firstSemitones = (parts[0] && parts[0].semitones) || 0;
     const stitchedPart =
-      '<part id="P1">' + allMeasures.join('') + '</part>';
+      '<part id="P1">' +
+        injectKeySignature(allMeasures.join(''), getKeyFifths(firstSemitones)) +
+      '</part>';
 
     return prefixWithWork + stitchedPart + '</score-partwise>';
   }
@@ -287,7 +474,7 @@
       if (midi >= lowMidi && midi <= highMidi) return fullMatch; // in range
       // Try to shift to a neighbour in the same diatonic step that lands
       // in range. If no neighbour in range exists (e.g. range is a single
-      // MIDI value, or too narrow for the step), leave the note alone —
+      // MIDI value, or too narrow for the step), leave the note alone --
       // there's no point in feeding the user a note that's still out of
       // range; the alternative is to alert them.
       // Up to 6 octaves either way covers all horn ranges we'll ever see.
@@ -351,7 +538,7 @@
   //   - The curriculum is note-level (we have the actual pitches), not
   //     exercise-level. There's no server source to fetch.
   //   - The output is a single Part, single Voice, treble-clef, 4/4 score.
-  //     The 3/4 waltz is encoded as 4/4 with a quarter rest on beat 4 —
+  //     The 3/4 waltz is encoded as 4/4 with a quarter rest on beat 4 --
   //     the practice page's parseMusicXML hardcodes 4 beats per measure
   //     so a true 3/4 time signature would mis-time the notes.
   //   - The user's title is injected as <work-title>.
@@ -406,7 +593,7 @@
 
   // Build one <note> element. `note` is { p, d } from the curriculum
   // (p=null → rest). `divisions` is the per-beat resolution (always
-  // 4 here — a quarter = 4 divisions, so a half = 8, a whole = 16).
+  // 4 here -- a quarter = 4 divisions, so a half = 8, a whole = 16).
   function buildNoteXml(note, divisions) {
     const dur = Math.round(note.d * divisions);
     const type = durationToType(note.d);
@@ -434,7 +621,7 @@
   }
 
   // Build one <measure> element. `bar` is { notes: [...] } from the
-  // curriculum. Asserts the bar sums to exactly 4 beats — a data
+  // curriculum. Asserts the bar sums to exactly 4 beats -- a data
   // error in the curriculum should fail loud, not play a mis-timed
   // score in the practice page.
   function buildBarXml(bar, divisions, measureNumber) {
@@ -460,7 +647,7 @@
   // (the user wants to see ~8 bars of context before committing
   // to save+practice). When maxBars is set and is less than the
   // total bars, we emit only that many measures. Same chord / pitch
-  // handling, same assertions — the only difference is the slice
+  // handling, same assertions -- the only difference is the slice
   // length at the end.
   function buildMasterClassEtude(etude, line, maxBars) {
     if (!etude || !line) throw new Error('buildMasterClassEtude: etude and line required');
@@ -491,11 +678,11 @@
 
     const divisions = 4;  // 1 quarter = 4 divisions (industry default)
     const bpm = etude.bpm || 80;
-    const safeTitle = (etude.title + ' — ' + line.name)
+    const safeTitle = (etude.title + ' -- ' + line.name)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
     // First measure: include <attributes> with divisions, key (C major /
-    // no accidentals), time (4/4 — we always use 4/4 even for the
+    // no accidentals), time (4/4 -- we always use 4/4 even for the
     // waltz, see header comment), and treble clef. Subsequent measures
     // are bare <note> sequences; the earlier <attributes> carry through.
     const firstBar = flatBars[0];
@@ -531,7 +718,7 @@
         '<work><work-title>' + safeTitle + '</work-title></work>' +
         '<identification>' +
           '<creator type="composer">Bob Mover (Master Class)</creator>' +
-          '<encoding><software>Bob Mover Lexicon — Master Class builder</software></encoding>' +
+          '<encoding><software>Bob Mover Lexicon -- Master Class builder</software></encoding>' +
         '</identification>' +
         '<part-list>' +
           '<score-part id="P1"><part-name>Voice</part-name></score-part>' +
@@ -564,7 +751,7 @@
   // exercise, or there's a transcription error in the curriculum
   // data. Surfaced in the preview pane as a second "E3–C6" badge
   // and (when violated) a warning panel. The save still proceeds
-  // — the warning is informational, not blocking, so the user can
+  // -- the warning is informational, not blocking, so the user can
   // still study extreme registers on purpose.
   //
   // To widen or narrow this band later, edit the two MIDI values
@@ -591,7 +778,7 @@
   //      black keys take the sharp form (C#, D#, F#, G#, A#).
   //      This means E#→F (MIDI 5), B#→C-octave+1 (MIDI 12 wraps),
   //      Fb→E (MIDI 4), Cb→B-octave-1, etc.
-  //   5. Recompute the octave for the new spelling — necessary
+  //   5. Recompute the octave for the new spelling -- necessary
   //      because C and B straddle an octave boundary (B#4 becomes
   //      C5, Cb4 becomes B3).
   //
@@ -600,7 +787,7 @@
   function simplifyEnharmonicXml(xml) {
     if (!xml || typeof xml !== 'string') return xml;
     // Match every <note>...</note> block that has a <pitch>.
-    // We don't need to worry about rests or chord tones — they
+    // We don't need to worry about rests or chord tones -- they
     // don't have <pitch> and so don't match.
     const noteRe = /<note>\s*<pitch>[\s\S]*?<\/pitch>[\s\S]*?<\/note>/g;
     return xml.replace(noteRe, function (noteBlock) {
@@ -624,7 +811,7 @@
       const midi = (octave + 1) * 12 + baseOffset + totalAlter;
       // Canonical spelling table: pitch class → simplest step+alter.
       // White keys take their natural name; black keys take the
-      // sharp form (no Db/Gb/Ab — those are valid but not "simplest"
+      // sharp form (no Db/Gb/Ab -- those are valid but not "simplest"
       // in the music21 sense).
       const pc = ((midi % 12) + 12) % 12;
       const CANONICAL = [
@@ -639,7 +826,7 @@
         { step: 'G', alter: 1 },  // 8  G# (was Ab)
         { step: 'A', alter: 0 },  // 9
         { step: 'A', alter: 1 },  // 10 A# (was Bb)
-        { step: 'B', alter: 0 },  // 11 (was Cb or B# → B/C — handled by octave bump)
+        { step: 'B', alter: 0 },  // 11 (was Cb or B# → B/C -- handled by octave bump)
       ];
       const canonical = CANONICAL[pc];
       // Recompute the octave for the new spelling. C and B straddle
@@ -666,7 +853,7 @@
   }
 
   // Count <note> elements in a Master-Class-generated MusicXML string.
-  // Mirrors countNotes() above but only counts non-rest notes — useful
+  // Mirrors countNotes() above but only counts non-rest notes -- useful
   // for the saved-etudes card display ("4 notes" not "8 notes with 4
   // rests"). Mirrors the practice page's countNotes semantics.
   function countPitchedNotes(xml) {
@@ -702,7 +889,7 @@
   // tones, matching the practice page's monophony). Range check
   // uses the user-provided lowMidi/highMidi. Interval check measures
   // the absolute semitone distance between consecutive pitched
-  // notes — anything > 11 is reported.
+  // notes -- anything > 11 is reported.
   //
   // Why both checks: the user wants to confirm their generated etudes
   // (a) are playable on their instrument (range) and (b) don't have
@@ -750,7 +937,7 @@
           return;
         }
         if (note.querySelector('chord')) {
-          // Skip chord tones (monophonic — practice page does the same)
+          // Skip chord tones (monophonic -- practice page does the same)
           return;
         }
         const stepEl   = note.querySelector('pitch > step');
@@ -764,7 +951,7 @@
         // Mirror practice.js: pitched notes are in the order they
         // appear; chord tones are skipped; rests advance posInMeasure
         // but don't emit a note. duration here is the basic <duration>/4
-        // approximation — accurate enough for the validation, which
+        // approximation -- accurate enough for the validation, which
         // doesn't need sub-beat precision.
         const dur = note.querySelector('duration');
         const durBeats = dur ? parseFloat(dur.textContent) / 4 : 1;
@@ -832,6 +1019,10 @@
   window.etudesStitch = {
     stitch: stitch,
     transposePitch: transposePitch,
+    respellInKey: respellInKey,
+    getKeyFifths: getKeyFifths,
+    getKeyLetterAlters: getKeyLetterAlters,
+    injectKeySignature: injectKeySignature,
     countNotes: countNotes,
     countMeasures: countMeasures,
     clampToRange: clampToRange,
