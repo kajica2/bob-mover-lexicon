@@ -1216,6 +1216,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_auth_login()
         if path == "/api/auth/logout":
             return self.handle_auth_logout()
+        if path == "/api/auth/bootstrap-admin":
+            return self.handle_auth_bootstrap_admin()
         if path == "/api/etudes":
             return self.handle_etudes_create()
         # Etude rename is a POST to /api/etudes/<id>/rename
@@ -1555,6 +1557,47 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not user:
             return self.send_json({"authenticated": False})
         return self.send_json({"authenticated": True, "user": user})
+
+    # Bootstrap endpoint: create the first admin user. Only works
+    # when no admin user exists yet — after that, the endpoint is a
+    # no-op returning 403. Designed for first-time setup on a fresh
+    # deploy; in steady-state, the admin account is created locally
+    # via `python3 create_admin.py <user> <pass>` and this endpoint
+    # never needs to fire.
+    def handle_auth_bootstrap_admin(self):
+        # Refuse if any admin already exists.
+        with db.get_db() as conn:
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            admin_count = c.fetchone()[0]
+        if admin_count > 0:
+            return self.send_json({
+                "error": "An admin already exists. Use create_admin.py locally."
+            }, 403)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+        except Exception:
+            raw = b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            return self.send_json({"error": "Invalid JSON body"}, 400)
+        username = (data.get("username") or "").strip()
+        password = data.get("password") or ""
+        if not username or not password:
+            return self.send_json({"error": "username and password are required"}, 400)
+        if len(password) < 8:
+            return self.send_json({"error": "Password must be at least 8 characters"}, 400)
+        try:
+            user_id = db.create_user(username, password, role="admin")
+        except ValueError as e:
+            return self.send_json({"error": str(e)}, 400)
+        token = db.create_session(user_id)
+        return self.send_json({
+            "token": token,
+            "user": {"id": user_id, "username": username, "role": "admin"},
+        })
 
     # ===== Etudes (server-side, admin-only) =====
     def handle_etudes_list(self):
