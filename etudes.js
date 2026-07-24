@@ -897,6 +897,13 @@
 
   function generateRandomPreview(isReroll) {
     const section = document.getElementById('random-section').value;
+    // Mirror the dropdown into state so renderRandomPreview() (called
+    // for both initial generation and re-roll) can read the current
+    // section without re-querying the DOM. This also makes the bug-
+    // fix below (`section_X × N exercises`) actually carry the right
+    // section id — previously the name always showed "?" because no
+    // code path was writing to state.random.section.
+    state.random.section = section;
     const count = parseInt(document.getElementById('random-count').value, 10);
     const spread = parseInt(document.getElementById('random-spread').value, 10);
     // Favorites pseudo-section: the random pool is the user's starred
@@ -978,7 +985,13 @@
     previewWrap.appendChild(loadingText);
     box.appendChild(previewWrap);
 
-    var namePreset = 'Random: §' + (state.random.section || '?') +
+    // Generated etude names always start with "section_<id>" so the
+    // setlist view is greppable / sortable by source. We dropped the
+    // "Random: §…" prefix and the § symbol (which didn't render in
+    // the chosen font) — "section_1A × 8 exercises" reads cleanly.
+    // state.random.section is now mirrored from the dropdown in
+    // generateRandomPreview() so the placeholder never falls back to "?".
+    var namePreset = 'section_' + (state.random.section || '?') +
       ' × ' + picked.length + ' exercises';
     var pickedSnapshot = picked.slice();
     (function stitchThenRender() {
