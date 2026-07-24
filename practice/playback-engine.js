@@ -94,6 +94,8 @@
   // offbeats but lower than downbeats.
   let metroConfig = { timeSig: '4/4', subdivision: 'off' };
   let scheduledIds = [];         // Tone.Transport event ids (for cancel)
+  let scheduledAudio = [];       // raw Web Audio osc/gain pairs (for stop)
+  let scheduledTimers = [];      // setTimeout ids for visual callbacks + onEnd
   let onNoteCb    = null;
   let onBeatCb    = null;
   let onEndCb     = null;
@@ -198,14 +200,39 @@
   // running — scheduleRepeat is driven by the Transport, so stopping
   // it would also kill the standalone. Only halt the Transport when
   // there's nothing left to drive.
+  // v34: also cancel raw Web Audio nodes (scheduledAudio) and any
+  // setTimeout-based visual callbacks (scheduledTimers). The previous
+  // version only used Transport.clear() which left raw oscs ringing
+  // and visual callbacks queued.
   function clearScheduled() {
-    if (!tone) return;
-    try {
-      for (const id of scheduledIds) tone.Transport.clear(id);
-    } catch (e) {}
+    if (tone) {
+      try {
+        for (const id of scheduledIds) tone.Transport.clear(id);
+      } catch (e) {}
+    }
     scheduledIds = [];
+    // Cancel raw Web Audio nodes scheduled for the future (or stop
+    // them immediately if they've already started).
+    for (let i = 0; i < scheduledAudio.length; i++) {
+      const pair = scheduledAudio[i];
+      try {
+        if (pair && pair.osc) {
+          try { pair.osc.stop(); } catch (e) {}
+          try { pair.osc.disconnect(); } catch (e) {}
+        }
+        if (pair && pair.gain) {
+          try { pair.gain.disconnect(); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+    scheduledAudio = [];
+    // Cancel any pending setTimeout-based visual callbacks + onEnd.
+    for (let i = 0; i < scheduledTimers.length; i++) {
+      try { clearTimeout(scheduledTimers[i]); } catch (e) {}
+    }
+    scheduledTimers = [];
     try { synth.triggerRelease(); } catch (e) {}
-    try { if (metronomeOn) tone.Transport.cancel(0); } catch (e) {}
+    try { if (metronomeOn && tone) tone.Transport.cancel(0); } catch (e) {}
   }
 
   // Replace the active schedule. Stops any current playback first.
@@ -241,6 +268,33 @@
   }
 
   // Start playback from the beginning. Returns true if armed.
+  //
+  // v34: rewrote scheduling to bypass Tone.Transport for note +
+  // metronome scheduling. The previous code passed absolute audio
+  // times (rawContext.currentTime + offset) to Transport.scheduleOnce,
+  // but Transport interprets that argument as Transport-relative time
+  // and adds its own start delay (~50ms) + lookAhead window (~100ms)
+  // before firing. The result: every note landed ~250ms LATER than
+  // it should have, and the first note after a Play click had a
+  // ~300ms perceived delay before sounding. By calling
+  // osc.start(audioTime) directly on the raw AudioContext we get
+  // sample-accurate scheduling with no Transport overhead.
+  //
+  // Visual callbacks (note highlights, beat flashes, onEnd) go
+  // through a setTimeout scheduled to fire at the right wall-clock
+  // time. setTimeout can be cancelled via clearTimeout in stop(),
+  // which is the cancellation mechanism the previous code lacked
+  // for non-Transport callbacks. A generation counter inside each
+  // setTimeout closure double-checks the playback is still active
+  // before running the callback, in case a stale timer slips through
+  // after stop().
+  //
+  // Transport is still used for:
+  //   - The standalone metronome (Transport.scheduleRepeat) which
+  //     needs a tempo-driven repeating interval that raw Web Audio
+  //     would be awkward to reimplement.
+  //   - Storing the BPM (Transport.bpm.value is the source of
+  //     truth for the standalone's interval).
   function play(opts) {
     opts = opts || {};
     onNoteCb = typeof opts.onNote === 'function' ? opts.onNote : null;
@@ -257,34 +311,28 @@
     playGeneration++;
     const myGen = playGeneration;
 
-    // Establish tempo on the Transport.
+    // Establish tempo on the Transport (still used by the standalone
+    // metronome).
     try { T.Transport.bpm.value = bpm; } catch (e) {}
 
-    // Stop any in-progress playback first.
+    // Stop any in-progress playback first. This cancels pending
+    // raw-Audio oscs + visual setTimeouts from the previous pass.
     clearScheduled();
 
-    // v27: schedule every event at an absolute AudioContext time
-    // instead of using Tone.Transport's "bars:beats:sixteenths" time
-    // string. Reason: the sixteenths field is integer-only (4 per
-    // beat), so 8th-note triplets (3 per beat, 1/3 = 0.333 beats each)
-    // got rounded to the nearest sixteenth and landed at the wrong
-    // audio time. Same problem hit the metronome's triplet
-    // subdivision. Tone.scheduleOnce accepts a number as audio
-    // context time, so we just compute the absolute time for each
-    // event: audioStart + beatTime * 60 / bpm.
-    //
-    // audioStart is captured BEFORE T.Transport.start() so it matches
-    // the moment the transport actually begins ticking. The 60ms
-    // buffer matches the existing `T.Transport.start('+0.05')` start
-    // delay so the first beat lands at audioStart (not at
-    // audioStart-60ms).
+    // Compute audioStart: a small lead-in so the first note's
+    // scheduled time is comfortably in the future, giving the
+    // browser time to actually fire the osc. 50ms is enough head
+    // room on every browser we've seen and keeps the perceived
+    // click-to-sound delay at roughly 50ms (vs the previous
+    // ~300ms with Transport).
     var rawCtx = T.getContext().rawContext;
-    var audioStart = rawCtx.currentTime + 0.06;
+    var audioStart = rawCtx.currentTime + 0.05;
     var beatToSec = function (beat) { return beat * 60 / bpm; };
+
     // v23: enforce monophony. The original Tone.MonoSynth did this
     // automatically via note-stealing; v20's raw-oscillator rewrite
-    // removed that safety, so when two notes share a beat (chord tones,
-    // overlapping exercises in a stitched etude, accidental
+    // removed that safety, so when two notes share a beat (chord
+    // tones, overlapping exercises in a stitched etude, accidental
     // fractional rounding) every one of them plays simultaneously —
     // producing stacked-tone "harmonies" that aren't in the score's
     // intent. We track which beat positions we've already scheduled
@@ -296,48 +344,45 @@
       const beatKey = note.beat.toFixed(4);
       if (scheduledBeats.has(beatKey)) continue;  // monophony: skip duplicate
       scheduledBeats.add(beatKey);
-      // Capture callbacks in locals for closure stability (cancelled by
-      // Stop which nulls the module-level refs).
+      // Capture callbacks in locals for closure stability (cleared
+      // by stop() which nulls the module-level refs).
       const onNote = onNoteCb;
       const midi = note.midi;
-      // Compute the note's duration in seconds. note.duration is in
-      // beats; multiply by (60 / bpm) to get seconds.
+      // note.duration is in beats; convert to seconds.
       const durSec = Math.max(0.05, note.duration * 60 / bpm);
-      // CRITICAL: const/let give each iteration its OWN binding of
+      // const/let give each iteration its OWN binding of
       // note/midi/durSec. v20's `var` made them function-scoped, so
       // every scheduled callback read the LAST note's values — the
       // entire exercise played as a single repeated D4 tone. v21 fix.
       const tAt = audioStart + beatToSec(note.beat);
-      const id = T.Transport.scheduleOnce(function(t){
-        scheduleNoteRaw(rawCtx, midi, t, durSec, false);
+      // Schedule the note directly on the raw AudioContext.
+      // scheduleNoteRaw returns the osc/gain pair so we can stop it
+      // mid-playback if the user clicks Stop before the note fires.
+      const pair = scheduleNoteRaw(rawCtx, midi, tAt, durSec, false);
+      scheduledAudio.push(pair);
+      // Schedule the visual highlight via setTimeout, using the
+      // delay in ms from now. The generation check skips stale
+      // timers after stop().
+      const delayMs = Math.max(0, (tAt - rawCtx.currentTime) * 1000);
+      const visualTimer = setTimeout(function () {
+        if (myGen !== playGeneration) return;
         if (onNote) {
-          try { T.Draw.schedule(function(){ onNote(note); }, t); } catch (e) {}
+          try { onNote(note); } catch (e) {}
         }
-      }, tAt);
-      scheduledIds.push(id);
-      // Keep a reference so Stop() can halt it cleanly.
-      // scheduleNoteRaw returns an osc/gain pair; capture it inside
-      // the closure once the callback fires.
+      }, delayMs);
+      scheduledTimers.push(visualTimer);
     }
 
-    // Metronome (optional): one click per beat across the score, locked
-    // to transport time so it stays in sync even after tempo changes.
+    // Metronome (optional): one click per beat across the score,
+    // each scheduled at a precise audio time via raw Web Audio.
     // v22: respects metroConfig.timeSig (downbeat detection) and
-    // metroConfig.subdivision (extra clicks per beat). Each scheduled
-    // callback is one click; the onBeat payload tells the UI which
-    // beat/subdivision just fired so the visual flash can match.
+    // metroConfig.subdivision (extra clicks per beat). The onBeat
+    // payload tells the UI which beat/subdivision just fired so the
+    // visual flash can match.
     if (metronomeOn) {
       const totalBeats = Math.ceil(totalBeatsOf(notes));
       const timeSig = metroConfig.timeSig || '4/4';
       const subdivision = metroConfig.subdivision || 'off';
-      // For each BEAT, schedule (1 + Nsub) clicks: one downbeat/offbeat
-      // at the beat, then Nsub subdivisions spread evenly inside the
-      // beat. With 'off' this is just the one click per beat.
-      // v27: subdivision offsets are real fractions of a beat
-      // (0, 0.5, 1/3, 0.25 etc). Pre-v27 these were passed through
-      // formatBeatTime which rounded to integer sixteenths, making
-      // triplet subdivisions land at the wrong time. Now we use
-      // absolute audio times so 1/3 of a beat stays 1/3 of a beat.
       const subSteps = subdivision === 'off' ? [0]
         : subdivision === '8ths'  ? [0, 0.5]
         : subdivision === 'triplets' ? [0, 1/3, 2/3]
@@ -346,9 +391,8 @@
       for (let b = 0; b < totalBeats; b++) {
         const isBeatDown = isDownbeat(b, timeSig);
         for (let s = 0; s < subSteps.length; s++) {
-          const subOffset = subSteps[s];          // 0..0.75 of a beat
+          const subOffset = subSteps[s];
           const isSubdivision = (s > 0);
-          // beatTime: beat b + subOffset (in beats, fractional OK)
           const beatTime = b + subOffset;
           const isDown = isBeatDown && !isSubdivision;
           const onBeat = onBeatCb;
@@ -356,15 +400,18 @@
             : isSubdivision ? METRO_SUB_HZ
             : METRO_BEAT_HZ;
           const tAt = audioStart + beatToSec(beatTime);
-          const id = T.Transport.scheduleOnce(function(t){
-            scheduleNoteRaw(rawCtx, 60, t, METRO_DUR, true);
+          // Schedule the click via raw Web Audio (no Transport delay).
+          const pair = scheduleNoteRaw(rawCtx, 60, tAt, METRO_DUR, true);
+          scheduledAudio.push(pair);
+          // Visual callback via setTimeout with generation check.
+          const delayMs = Math.max(0, (tAt - rawCtx.currentTime) * 1000);
+          const beatTimer = setTimeout(function () {
+            if (myGen !== playGeneration) return;
             if (onBeat) {
-              try { T.Draw.schedule(function(){
-                onBeat({ beat: b, sub: s, isDown, isSubdivision, beatTime });
-              }, t); } catch (e) {}
+              try { onBeat({ beat: b, sub: s, isDown, isSubdivision, beatTime }); } catch (e) {}
             }
-          }, tAt);
-          scheduledIds.push(id);
+          }, delayMs);
+          scheduledTimers.push(beatTimer);
         }
       }
     }
@@ -376,27 +423,28 @@
     // myGen !== playGeneration in the closure).
     const totalBeatsForEnd = totalBeatsOf(notes);
     const totalSecs = beatToSec(totalBeatsForEnd) + 0.2;
-    const endId = T.Transport.scheduleOnce(() => {
+    const endAt = audioStart + totalSecs;
+    const endDelayMs = Math.max(0, (endAt - rawCtx.currentTime) * 1000);
+    const endTimer = setTimeout(function () {
+      if (myGen !== playGeneration) return;
       if (onEndCb) {
         try { onEndCb(); } catch (e) {}
       }
       if (loopOn && myGen === playGeneration) {
-        // Re-arm after a small gap so the ear registers the new pass
-        // and the previous note's release tail can fade out. The
-        // setTimeout fires on the main thread; if stop() runs in the
-        // 200ms window, it'll bump playGeneration and the closure
-        // here will see the mismatch and skip the recursive play().
+        // Re-arm after a small gap so the ear registers the new
+        // pass and the previous note's release tail can fade out.
         setTimeout(function () {
           if (loopOn && myGen === playGeneration) {
             play({ onNote: onNoteCb, onBeat: onBeatCb, onEnd: onEndCb });
           }
         }, LOOP_GAP_MS);
       }
-    }, audioStart + totalSecs);
-    scheduledIds.push(endId);
+    }, endDelayMs);
+    scheduledTimers.push(endTimer);
 
-    // Start the transport now (if already started, schedule from current).
-    try { T.Transport.start('+0.05'); } catch (e) {}
+    // No Transport.start() call — raw Web Audio runs on its own
+    // clock. The oscs scheduled above will fire at their tAt
+    // (audioStart + offset) without needing any Transport kick.
 
     return true;
   }
