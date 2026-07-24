@@ -156,7 +156,7 @@
             <a class="ex-practice-link" href="./practice/?id=${e.id}">Practice →</a>
             <button class="select-star ${isSel ? 'favorited' : ''}" data-toggle-fav="${e.id}" type="button" aria-label="${isSel ? 'Remove from favorites' : 'Add to favorites'}" title="${isSel ? 'Remove from favorites' : 'Add to favorites'}">
               <span class="select-star-icon">${isSel ? '★' : '☆'}</span>
-              <span class="select-star-label">${isSel ? 'Added to favorites' : 'Add to favorites'}</span>
+              <span class="select-star-label">Add to favorites</span>
             </button>
           </div>
         </div>
