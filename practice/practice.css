@@ -147,6 +147,38 @@
 .score-fallback img {
   width: 100%;
   height: auto;
+}
+
+/* Original PNG from the book — shown under the rendered score so the
+ * user can compare the Verovio render to the source. The image is
+ * the static page-cropped PNG (rendered directly from the source PDF
+ * by the build pipeline), so it doesn't reflect any user-applied
+ * transposition, cycle, or range-clamp. The label makes that explicit
+ * so the user doesn't get confused about why the image might not
+ * match the score above it. */
+.original-png {
+  margin: 0 0 24px;
+  padding: 12px 16px 16px;
+  background: var(--paper, #f8f5ef);
+  border: 1px solid var(--ink-200, #e0d9c8);
+  border-radius: 6px;
+}
+.original-png[hidden] { display: none; }
+.original-png-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-500, #7a7264);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.original-png img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  background: #fff;
+}
   display: block;
 }
 

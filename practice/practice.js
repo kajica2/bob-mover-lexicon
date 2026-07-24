@@ -497,6 +497,29 @@
     }
 
     state.currentId = id;
+    // Show the original page-cropped PNG from the book under the
+    // rendered score. The image is the static source PDF crop (not
+    // the Verovio render), so it doesn't reflect any transposition,
+    // cycle, or range-clamp — it's there as a sanity-check / study
+    // aid, not as the playable view. Hidden by default via the [hidden]
+    // attribute; revealed here once an exercise is loaded.
+    const origPngBox = document.getElementById('original-png');
+    const origPngImg = document.getElementById('original-png-img');
+    if (origPngBox && origPngImg) {
+      if (typeof id === 'number' || (typeof id === 'string' && /^\d+$/.test(id))) {
+        const numericId = typeof id === 'number' ? id : parseInt(id, 10);
+        origPngImg.src = '../exercises_images/' +
+          String(numericId).padStart(4, '0') + '.png';
+        origPngImg.alt = 'Original page from the Bob Mover Jazz Lexicon — exercise #' + numericId;
+        origPngBox.hidden = false;
+      } else {
+        // Etude load path (string id starting with 'etude_'): no
+        // single source page to show, so leave the original PNG
+        // hidden.
+        origPngBox.hidden = true;
+        origPngImg.removeAttribute('src');
+      }
+    }
     // Check favorite status
     if (state.currentId) {
       try {

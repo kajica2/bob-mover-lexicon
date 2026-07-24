@@ -167,6 +167,14 @@
             <div class="score-loading">Loading notation…</div>
           </div>
 
+          <!-- Original PNG from the book — shown under the rendered
+               score so the user can compare the Verovio render to the
+               source. Hidden until an exercise is loaded. -->
+          <div id="original-png" class="original-png" hidden>
+            <div class="original-png-label">From the book (original)</div>
+            <img id="original-png-img" alt="Original page from the Bob Mover Jazz Lexicon">
+          </div>
+
 
 
         <!-- Log practice -->
@@ -283,14 +291,14 @@
     </div>
   </main>
 
-  <script src="vendor/verovio-toolkit.js?v=41"></script>
-  <script src="vendor/Tone.js?v=41"></script>
-  <script src="../range-modal.js?v=41"></script>
-  <script src="takes-store.js?v=41"></script>
-  <script src="../etudes-stitch.js?v=41"></script>
-  <script src="../etudes-store.js?v=41"></script>
-  <script src="playback-engine.js?v=41"></script>
-  <script src="practice.js?v=41"></script>
+  <script src="vendor/verovio-toolkit.js?v=42"></script>
+  <script src="vendor/Tone.js?v=42"></script>
+  <script src="../range-modal.js?v=42"></script>
+  <script src="takes-store.js?v=42"></script>
+  <script src="../etudes-stitch.js?v=42"></script>
+  <script src="../etudes-store.js?v=42"></script>
+  <script src="playback-engine.js?v=42"></script>
+  <script src="practice.js?v=42"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
     <div class="fullpage-toolbar">
