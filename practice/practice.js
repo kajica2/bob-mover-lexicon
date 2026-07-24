@@ -204,6 +204,25 @@
     return t;
   }
 
+  // Drop chord symbols from the served MusicXML so Verovio doesn't
+  // render "G7", "Ab7", etc. above each measure. The server's
+  // /api/musicxml/<id> endpoint injects <harmony> elements at the
+  // start of each measure from chords.json (the OCR'd chord
+  // progression from the source PDF), and the user wants those
+  // hidden in the practice view so they have to read the harmony
+  // by ear instead of having it spelled out. Mirrors the same
+  // strip in etudes-stitch.js:fetchSource (which strips harmonies
+  // before stitching, so the etude doesn't carry a misleading
+  // chord label from one source into the next).
+  // Matches both <harmony>...</harmony> blocks and self-closing
+  // <harmony ... /> variants.
+  function stripHarmony(xml) {
+    if (!xml) return xml;
+    return xml
+      .replace(/<harmony>[\s\S]*?<\/harmony>/g, '')
+      .replace(/<harmony\b[^>]*\/>/g, '');
+  }
+
   // ===== Cycle (adds bars across keys) =====
   // When the user picks a Cycle mode other than 'off' and Bars > 1, the
   // current exercise is repeated Bars times during playback, each repetition
@@ -578,7 +597,9 @@
       const r = await fetch(url);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const xml = await r.text();
-      await renderScore(xml);
+      // Drop <harmony> elements so chord symbols don't render above
+      // each measure. See stripHarmony() for the rationale.
+      await renderScore(stripHarmony(xml));
     } catch (e) {
       document.getElementById('score-container').innerHTML =
         `<div class="score-loading">Could not load MusicXML for this exercise.<br><small>${e.message}</small></div>`;
@@ -1837,8 +1858,9 @@
         const xml = await r.text();
         // Re-render the score from the cycled MusicXML. This also re-parses
         // the notes for playback, so state.currentScore.notes will reflect
-        // the full extended exercise.
-        await renderScore(xml);
+        // the full extended exercise. Drop <harmony> elements so the
+        // chord labels don't reappear on the cycled score.
+        await renderScore(stripHarmony(xml));
         const seq = cycleKeySequence(mode);
         const lastKey = mode === 'off' ? 0 : (seq[Math.min(bars, seq.length) - 1] || 0);
         state.cycleCommitted = { mode, bars, key: lastKey, dropped: 0 };
