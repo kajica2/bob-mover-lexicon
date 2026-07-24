@@ -150,18 +150,40 @@
           <div class="saved-etudes-toolbar">
             <input id="etudes-search" class="input" placeholder="Filter by name or source…">
             <button id="etudes-clear-all" class="btn btn-ghost btn-sm">Clear all</button>
+            <!-- Admin login: hidden by default. When the user is
+                 logged in, the button + form are replaced by a
+                 "Logged in as <username> (Logout)" indicator. Save
+                 buttons in Composer / Random / Master Class also
+                 push the etude to the server when logged in. -->
+            <div id="admin-area" class="admin-area">
+              <button id="admin-login-btn" class="btn btn-ghost btn-sm" type="button">Admin login</button>
+              <form id="admin-login-form" class="admin-login-form" hidden>
+                <input id="admin-username" class="input" placeholder="username" autocomplete="username">
+                <input id="admin-password" class="input" type="password" placeholder="password" autocomplete="current-password">
+                <button class="btn btn-primary btn-sm" type="submit">Sign in</button>
+                <button id="admin-login-cancel" class="btn btn-ghost btn-sm" type="button">Cancel</button>
+              </form>
+              <span id="admin-status" class="admin-status" hidden></span>
+            </div>
           </div>
         </div>
+        <!-- Local (IndexedDB) list — always shown. -->
         <div id="etudes-list" class="etudes-list">
           <p class="muted" id="etudes-empty">No saved etudes yet.</p>
+        </div>
+        <!-- Server (admin) list — only shown when an admin is logged in. -->
+        <div id="server-etudes-wrap" class="server-etudes-wrap" hidden>
+          <h4 style="margin-top:18px;margin-bottom:8px">Server etudes <span id="server-etudes-count" class="muted">(0)</span></h4>
+          <div id="server-etudes-list" class="etudes-list"></div>
         </div>
       </section>
     </section>
   </main>
 
   <script src="etudes-store.js"></script>
-  <script src="etudes-curriculum.js?v=40"></script>
-  <script src="etudes-stitch.js?v=40"></script>
-  <script src="etudes.js?v=40"></script>
+  <script src="etudes-server.js?v=41"></script>
+  <script src="etudes-curriculum.js?v=41"></script>
+  <script src="etudes-stitch.js?v=41"></script>
+  <script src="etudes.js?v=41"></script>
 </body>
 </html>

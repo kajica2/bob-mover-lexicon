@@ -1108,6 +1108,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_recent(qs)
         if path == "/api/practice/stats":
             return self.handle_stats(qs)
+        if path == "/api/auth/status":
+            return self.handle_auth_status()
+        if path == "/api/etudes":
+            return self.handle_etudes_list()
+        if path.startswith("/api/etudes/") and path != "/api/etudes/":
+            etude_id = path.rsplit("/", 1)[-1]
+            if etude_id:
+                return self.handle_etude_get(etude_id)
         if path.startswith("/api/practice/exercise/"):
             try:
                 eid = int(path.rsplit("/", 1)[-1])
@@ -1204,6 +1212,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        if path == "/api/auth/login":
+            return self.handle_auth_login()
+        if path == "/api/auth/logout":
+            return self.handle_auth_logout()
+        if path == "/api/etudes":
+            return self.handle_etudes_create()
+        # Etude rename is a POST to /api/etudes/<id>/rename
+        m_rename = re.match(r"^/api/etudes/([^/]+)/rename$", path)
+        if m_rename:
+            return self.handle_etude_rename(m_rename.group(1))
+
         # Favorite endpoints. Accepts numeric exercise IDs (e.g. "262")
         # and string etude IDs (e.g. "etude_abc123").
         m_fav = re.match(r"^/api/favorites/([^/]+)$", path)
@@ -1226,9 +1245,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.handle_create_collection()
         return self.send_json({"error": "Not Found"}, 404)
 
+    def do_PUT(self):
+        # Reserved for future use; we use POST + sub-path for etude
+        # rename (since SimpleHTTPRequestHandler's do_PUT on some
+        # Python versions doesn't read the body reliably).
+        return self.send_json({"error": "Not Found"}, 404)
+
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        # Delete an etude
+        if path.startswith("/api/etudes/") and path != "/api/etudes/":
+            etude_id = path.rsplit("/", 1)[-1]
+            if etude_id:
+                return self.handle_etude_delete(etude_id)
         # Unfavorite (numeric or string ID)
         m_fav = re.match(r"^/api/favorites/([^/]+)$", path)
         if m_fav:
@@ -1437,6 +1467,160 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
+
+    # ===== Auth =====
+    # Bearer-token auth. The frontend stores the token in localStorage
+    # and sends it on every authenticated request as
+    # `Authorization: Bearer <token>`. The token maps to a user via
+    # the sessions table. No cookies / CSRF needed.
+    def _read_bearer_token(self):
+        auth = self.headers.get("Authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return None
+        return auth[7:].strip() or None
+
+    def _current_user(self):
+        """Resolve the user from the Authorization: Bearer header. If
+        absent, returns None. The caller is responsible for deciding
+        whether the endpoint requires auth.
+        """
+        token = self._read_bearer_token()
+        if not token:
+            return None
+        user = db.get_user_by_token(token)
+        if user is None:
+            return None
+        # Strip the password hash/salt before returning to the client.
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "created_at": user["created_at"],
+        }
+
+    def _require_user(self):
+        """Return the current user, or send 401 and return None. Used
+        by every endpoint that needs auth.
+        """
+        user = self._current_user()
+        if not user:
+            self.send_json({"error": "Authentication required"}, 401)
+            return None
+        return user
+
+    def _require_admin(self):
+        user = self._require_user()
+        if not user:
+            return None
+        if user["role"] != "admin":
+            self.send_json({"error": "Admin role required"}, 403)
+            return None
+        return user
+
+    def handle_auth_login(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+        except Exception:
+            raw = b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            return self.send_json({"error": "Invalid JSON body"}, 400)
+        username = (data.get("username") or "").strip()
+        password = data.get("password") or ""
+        if not username or not password:
+            return self.send_json({"error": "username and password are required"}, 400)
+        user = db.authenticate(username, password)
+        if not user:
+            return self.send_json({"error": "Invalid credentials"}, 401)
+        token = db.create_session(user["id"])
+        return self.send_json({
+            "token": token,
+            "user": {
+                "id": user["id"],
+                "username": user["username"],
+                "role": user["role"],
+            },
+        })
+
+    def handle_auth_logout(self):
+        token = self._read_bearer_token()
+        if token:
+            db.delete_session(token)
+        return self.send_json({"ok": True})
+
+    def handle_auth_status(self):
+        user = self._current_user()
+        if not user:
+            return self.send_json({"authenticated": False})
+        return self.send_json({"authenticated": True, "user": user})
+
+    # ===== Etudes (server-side, admin-only) =====
+    def handle_etudes_list(self):
+        user = self._require_user()
+        if not user:
+            return
+        rows = db.list_etudes_for_user(user["id"])
+        return self.send_json({
+            "etudes": [db.row_to_etude_dict(r) for r in rows],
+        })
+
+    def handle_etudes_create(self):
+        user = self._require_user()
+        if not user:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+        except Exception:
+            raw = b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            return self.send_json({"error": "Invalid JSON body"}, 400)
+        if not data.get("id"):
+            data["id"] = "etude_" + os.urandom(8).hex()
+        data["user_id"] = user["id"]
+        try:
+            etude_id = db.save_etude(data)
+        except ValueError as e:
+            return self.send_json({"error": str(e)}, 400)
+        return self.send_json({"ok": True, "id": etude_id})
+
+    def handle_etude_get(self, etude_id):
+        user = self._require_user()
+        if not user:
+            return
+        row = db.get_etude_for_user(etude_id, user["id"])
+        if not row:
+            return self.send_json({"error": "Not found"}, 404)
+        return self.send_json({"etude": db.row_to_etude_dict(row)})
+
+    def handle_etude_delete(self, etude_id):
+        user = self._require_user()
+        if not user:
+            return
+        if db.delete_etude_for_user(etude_id, user["id"]):
+            return self.send_json({"ok": True})
+        return self.send_json({"error": "Not found"}, 404)
+
+    def handle_etude_rename(self, etude_id):
+        user = self._require_user()
+        if not user:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+        except Exception:
+            raw = b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            return self.send_json({"error": "Invalid JSON body"}, 400)
+        if db.rename_etude_for_user(etude_id, user["id"], data.get("name", "")):
+            return self.send_json({"ok": True})
+        return self.send_json({"error": "Not found"}, 404)
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

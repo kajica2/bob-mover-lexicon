@@ -36,6 +36,7 @@
   function init() {
     wireModeTabs();
     wireSavedListFilter();
+    wireAdminLogin();
     renderMasterClass();   // Master Class has no server dependency — render immediately
     fetchExercises().then(function () {
       populateComposerSection();
@@ -45,6 +46,214 @@
       wireRandomControls();
       wireEtudesActions();
       refreshSavedEtudes();
+      refreshAdminStatus();
+    });
+  }
+
+  // ---------- Admin login / server etudes ----------
+  // v41: when an admin is logged in, etudes are also saved to the
+  // server so they persist across devices / browsers. The token is
+  // stored in localStorage by etudes-server.js. Composer / Random /
+  // Master Class save flows additionally call saveToServer() when
+  // the user is logged in (failures are non-fatal — the local
+  // save still succeeded).
+  function wireAdminLogin() {
+    var loginBtn = document.getElementById('admin-login-btn');
+    var form = document.getElementById('admin-login-form');
+    var cancelBtn = document.getElementById('admin-login-cancel');
+    var status = document.getElementById('admin-status');
+    if (loginBtn) {
+      loginBtn.addEventListener('click', function () {
+        loginBtn.hidden = true;
+        form.hidden = false;
+        var u = document.getElementById('admin-username');
+        if (u) u.focus();
+      });
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', function () {
+        form.hidden = true;
+        loginBtn.hidden = false;
+      });
+    }
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var u = document.getElementById('admin-username').value;
+        var p = document.getElementById('admin-password').value;
+        if (!window.etudesServer) {
+          toast('Server module not loaded.', true);
+          return;
+        }
+        window.etudesServer.login(u, p).then(function (user) {
+          form.hidden = true;
+          loginBtn.hidden = true;
+          toast('Signed in as ' + user.username);
+          refreshAdminStatus();
+          refreshServerEtudes();
+        }).catch(function (err) {
+          toast('Login failed: ' + (err && err.message ? err.message : 'unknown'), true);
+        });
+      });
+    }
+    if (status) {
+      // Event delegation — the status element is rebuilt by
+      // refreshAdminStatus() so a single listener on the body
+      // wouldn't help; instead, attach after the element is rendered.
+      status.addEventListener('click', function (e) {
+        if (e.target && e.target.id === 'admin-logout-btn') {
+          window.etudesServer.logout();
+          refreshAdminStatus();
+          toast('Signed out.');
+        }
+      });
+    }
+  }
+
+  function refreshAdminStatus() {
+    if (!window.etudesServer) return;
+    window.etudesServer.status().then(function (body) {
+      var loginBtn = document.getElementById('admin-login-btn');
+      var form = document.getElementById('admin-login-form');
+      var status = document.getElementById('admin-status');
+      var wrap = document.getElementById('server-etudes-wrap');
+      if (body.authenticated && body.user) {
+        if (loginBtn) loginBtn.hidden = true;
+        if (form) form.hidden = true;
+        if (status) {
+          status.hidden = false;
+          status.innerHTML = '';
+          var u = document.createElement('span');
+          u.className = 'admin-username';
+          u.textContent = body.user.username;
+          status.appendChild(u);
+          var role = document.createElement('span');
+          role.textContent = '(' + body.user.role + ')';
+          status.appendChild(role);
+          var out = document.createElement('button');
+          out.id = 'admin-logout-btn';
+          out.className = 'btn btn-ghost btn-sm';
+          out.type = 'button';
+          out.textContent = 'Logout';
+          status.appendChild(out);
+        }
+        if (wrap) wrap.hidden = false;
+        refreshServerEtudes();
+      } else {
+        if (loginBtn) loginBtn.hidden = false;
+        if (form) form.hidden = true;
+        if (status) {
+          status.hidden = true;
+          status.innerHTML = '';
+        }
+        if (wrap) wrap.hidden = true;
+      }
+    });
+  }
+
+  function refreshServerEtudes() {
+    var list = document.getElementById('server-etudes-list');
+    var count = document.getElementById('server-etudes-count');
+    if (!list) return;
+    if (!window.etudesServer || !window.etudesServer.isLoggedIn()) {
+      list.innerHTML = '';
+      if (count) count.textContent = '(0)';
+      return;
+    }
+    window.etudesServer.listEtudes().then(function (rows) {
+      list.innerHTML = '';
+      if (!rows.length) {
+        var p = document.createElement('p');
+        p.className = 'muted';
+        p.id = 'server-etudes-empty';
+        p.textContent = 'No server-side etudes yet. Save one to populate this list.';
+        list.appendChild(p);
+        if (count) count.textContent = '(0)';
+        return;
+      }
+      if (count) count.textContent = '(' + rows.length + ')';
+      rows.forEach(function (et) { list.appendChild(makeServerEtudeCard(et)); });
+    });
+  }
+
+  function makeServerEtudeCard(et) {
+    var card = document.createElement('div');
+    card.className = 'etude-card';
+    card.dataset.id = et.id;
+
+    var info = document.createElement('div');
+    info.className = 'etude-info';
+    var titleRow = document.createElement('div');
+    titleRow.className = 'etude-title-row';
+    var name = document.createElement('span');
+    name.className = 'etude-name';
+    name.textContent = et.name;
+    titleRow.appendChild(name);
+    var badge = document.createElement('span');
+    badge.className = 'etude-source-badge source-' + (et.source || 'composer');
+    badge.textContent = et.source === 'random' ? 'random' :
+                        et.source === 'master-class' ? 'master class' :
+                        et.source === 'pattern' ? 'pattern' : 'composed';
+    titleRow.appendChild(badge);
+    var cloud = document.createElement('span');
+    cloud.className = 'etude-source-badge';
+    cloud.style.background = 'rgba(80,120,200,0.10)';
+    cloud.style.color = '#1f4080';
+    cloud.style.borderColor = 'rgba(80,120,200,0.30)';
+    cloud.textContent = '☁ server';
+    titleRow.appendChild(cloud);
+    info.appendChild(titleRow);
+
+    var meta = document.createElement('div');
+    meta.className = 'etude-meta';
+    var notes = et.noteCount || 0;
+    var date = et.updatedAt ? new Date(et.updatedAt).toLocaleDateString() :
+              (et.createdAt ? new Date(et.createdAt).toLocaleDateString() : '');
+    meta.innerHTML = '<strong>' + (et.exerciseIds || []).length + '</strong> exercises · ' +
+                     '<strong>' + notes + '</strong> notes · ' + (date || '');
+    info.appendChild(meta);
+
+    var rename = document.createElement('button');
+    rename.className = 'btn btn-ghost btn-sm';
+    rename.textContent = 'Rename';
+    rename.addEventListener('click', function () {
+      var n = prompt('Rename etude:', et.name);
+      if (n && n.trim() && n !== et.name) {
+        window.etudesServer.renameEtude(et.id, n.trim()).then(refreshServerEtudes);
+      }
+    });
+
+    var del = document.createElement('button');
+    del.className = 'btn btn-danger btn-sm';
+    del.textContent = 'Delete';
+    del.addEventListener('click', function () {
+      if (confirm('Delete "' + et.name + '" from the server?')) {
+        window.etudesServer.deleteEtude(et.id).then(refreshServerEtudes);
+      }
+    });
+
+    var practice = document.createElement('a');
+    practice.className = 'btn-practice';
+    practice.href = '/practice/?id=' + encodeURIComponent(et.id);
+    practice.textContent = 'Practice';
+
+    card.appendChild(info);
+    card.appendChild(rename);
+    card.appendChild(del);
+    card.appendChild(practice);
+    return card;
+  }
+
+  // Non-blocking helper: try to save to the server. Failures are
+  // silent (toast) but don't block the local save flow.
+  function saveToServer(record) {
+    if (!window.etudesServer || !window.etudesServer.isLoggedIn()) return;
+    window.etudesServer.saveEtude(record).then(function () {
+      // Refresh the server list so the user can see the saved etude.
+      if (typeof refreshServerEtudes === 'function') refreshServerEtudes();
+    }).catch(function (err) {
+      console.error('server save failed', err);
+      toast('Server save failed: ' + (err && err.message ? err.message : 'unknown'), true);
     });
   }
 
@@ -592,17 +801,19 @@
       return { id: p.id, semitones: p.semitones || 0 };
     });
     var id = window.etudesStore.newId();
+    var composerRecord = {
+      id: id,
+      name: name,
+      exerciseIds: parts.map(function (p) { return p.id; }),
+      semitones: parts.map(function (p) { return p.semitones; }),
+      mode: 'composer',
+      source: 'composer',
+      musicxml: xml,
+      noteCount: noteCount,
+    };
     try {
-      await window.etudesStore.saveEtude({
-        id: id,
-        name: name,
-        exerciseIds: parts.map(function (p) { return p.id; }),
-        semitones: parts.map(function (p) { return p.semitones; }),
-        mode: 'composer',
-        source: 'composer',
-        musicxml: xml,
-        noteCount: noteCount,
-      });
+      await window.etudesStore.saveEtude(composerRecord);
+      saveToServer(composerRecord);
     } catch (e) {
       toast('Save failed: ' + e.message, true);
       return;
@@ -1307,7 +1518,7 @@
                  ' — ' + line.name;
     var id = window.etudesStore.newId();
     try {
-      await window.etudesStore.saveEtude({
+      var mcRecord = {
         id: id,
         name: name,
         exerciseIds: [],
@@ -1323,7 +1534,9 @@
           bpm: etude.bpm,
           transposed: !!transposed,
         },
-      });
+      };
+      await window.etudesStore.saveEtude(mcRecord);
+      saveToServer(mcRecord);
     } catch (e) {
       console.error('saveEtude failed', e);
       toast('Save failed: ' + e.message, true);
@@ -1391,17 +1604,19 @@
     name = await uniquifyEtudeName(name);
 
     const id = window.etudesStore.newId();
+    var genRecord = {
+      id: id,
+      name: name,
+      exerciseIds: parts.map(function (p) { return p.id; }),
+      semitones: parts.map(function (p) { return p.semitones || 0; }),
+      mode: source,
+      source: source,
+      musicxml: musicxml,
+      noteCount: window.etudesStitch.countNotes(musicxml),
+    };
     try {
-      await window.etudesStore.saveEtude({
-        id: id,
-        name: name,
-        exerciseIds: parts.map(function (p) { return p.id; }),
-        semitones: parts.map(function (p) { return p.semitones || 0; }),
-        mode: source,
-        source: source,
-        musicxml: musicxml,
-        noteCount: window.etudesStitch.countNotes(musicxml),
-      });
+      await window.etudesStore.saveEtude(genRecord);
+      saveToServer(genRecord);
     } catch (e) {
       console.error('saveEtude failed', e);
       toast('Could not save etude: ' + e.message, true);

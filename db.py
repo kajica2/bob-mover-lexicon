@@ -8,12 +8,26 @@ Schema:
   - id, name, created_at
 - collection_items: many-to-many
   - collection_id, exercise_id, position
+- favorites: exercise_id (string for etude support) -> created_at
+- users: login accounts. role='admin' can save etudes server-side and
+  edit data; role='user' is a regular member. Default new users are 'user'.
+  - id, username UNIQUE, password_hash, password_salt, role, created_at
+- sessions: opaque token -> user_id, expires_at
+  - token (primary key, random 32-byte hex), user_id, expires_at, created_at
+- etudes: server-side etude storage. One row per etude; musicxml cached
+  so the Practice page can render without re-stitching. Owned by user_id.
+  - id, user_id, name, exercise_ids_json, semitones_json, musicxml,
+    source, note_count, created_at, updated_at
 """
+import hashlib
+import hmac
 import json
+import os
+import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "practice.db"
@@ -108,6 +122,57 @@ def init_db():
                 PRIMARY KEY (collection_id, exercise_id),
                 FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
             )
+        """)
+        # Admin / auth tables. Users with role='admin' can save etudes
+        # server-side (and persist them across devices/browsers) and
+        # edit the data. Sessions are random 32-byte hex tokens stored
+        # in the Authorization: Bearer header (or via cookie if the
+        # frontend prefers). Expires after SESSION_TTL_HOURS.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                password_salt TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_sessions_user
+            ON sessions(user_id)
+        """)
+        # Server-side etude storage. One row per etude; musicxml is
+        # the precomputed stitched MusicXML string. exerciseIds +
+        # semitones are JSON arrays (parallel) so they round-trip
+        # without a join table.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS etudes (
+                id TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                exercise_ids_json TEXT NOT NULL DEFAULT '[]',
+                semitones_json TEXT NOT NULL DEFAULT '[]',
+                musicxml TEXT NOT NULL,
+                source TEXT,
+                note_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_etudes_user_created
+            ON etudes(user_id, created_at DESC)
         """)
         # Seed default collections
         c.execute("SELECT COUNT(*) FROM collections")
@@ -333,6 +398,255 @@ def delete_collection(collection_id):
         c = conn.cursor()
         c.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
         return c.rowcount > 0
+
+
+# ===== Users / auth =====
+# PBKDF2-HMAC-SHA256 password hashing. 200k iterations + 16-byte salt
+# is OWASP's 2023+ recommendation. The salt + iteration count are
+# stored alongside the hash so we can rotate the parameters later
+# without losing old accounts.
+_PBKDF2_ITERS = 200_000
+_PBKDF2_SALT_BYTES = 16
+_PBKDF2_HASH = "sha256"
+
+def _hash_password(password, salt=None, iters=_PBKDF2_ITERS):
+    """Return (salt_hex, hash_hex) for the given password. Salt is
+    random bytes (16) by default; supply one to re-derive for
+    verification.
+    """
+    if salt is None:
+        salt = secrets.token_bytes(_PBKDF2_SALT_BYTES)
+    h = hashlib.pbkdf2_hmac(_PBKDF2_HASH, password.encode("utf-8"),
+                             salt, iters)
+    return salt.hex(), h.hex()
+
+def _verify_password(password, salt_hex, expected_hash_hex,
+                     iters=_PBKDF2_ITERS):
+    salt = bytes.fromhex(salt_hex)
+    h = hashlib.pbkdf2_hmac(_PBKDF2_HASH, password.encode("utf-8"),
+                             salt, iters)
+    return hmac.compare_digest(h.hex(), expected_hash_hex)
+
+def create_user(username, password, role="user"):
+    """Create a new user. Raises ValueError if the username is taken."""
+    username = (username or "").strip()
+    if not username or not password:
+        raise ValueError("username and password are required")
+    if role not in ("user", "admin"):
+        raise ValueError(f"role must be 'user' or 'admin' (got {role!r})")
+    salt_hex, hash_hex = _hash_password(password)
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        try:
+            c.execute(
+                "INSERT INTO users (username, password_hash, password_salt, role) "
+                "VALUES (?, ?, ?, ?)",
+                (username, hash_hex, salt_hex, role),
+            )
+        except sqlite3.IntegrityError:
+            raise ValueError(f"username {username!r} already exists")
+        return c.lastrowid
+
+def get_user_by_username(username):
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username = ?", (username,))
+        return c.fetchone()
+
+def get_user_by_id(user_id):
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        return c.fetchone()
+
+def authenticate(username, password):
+    """Return user row on success, None on bad credentials."""
+    user = get_user_by_username(username)
+    if not user:
+        return None
+    if not _verify_password(password, user["password_salt"],
+                            user["password_hash"]):
+        return None
+    return user
+
+def set_user_password(user_id, new_password):
+    salt_hex, hash_hex = _hash_password(new_password)
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?",
+            (hash_hex, salt_hex, user_id),
+        )
+        return c.rowcount > 0
+
+def set_user_role(user_id, role):
+    if role not in ("user", "admin"):
+        raise ValueError(f"role must be 'user' or 'admin' (got {role!r})")
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        return c.rowcount > 0
+
+# Token lifetime. 30 days is generous — the user can re-login from
+# any device. Shorter TTLs would force a monthly login cycle.
+SESSION_TTL_HOURS = 24 * 30
+
+def create_session(user_id):
+    """Mint a new session token for the user. Returns the token."""
+    token = secrets.token_hex(32)
+    expires = (datetime.now(timezone.utc) + timedelta(hours=SESSION_TTL_HOURS)).isoformat()
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user_id, expires),
+        )
+    return token
+
+def get_user_by_token(token):
+    """Look up the user for a valid (non-expired) session token. Returns
+    None if the token is missing/expired/revoked.
+    """
+    if not token:
+        return None
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT u.* FROM sessions s
+            JOIN users u ON u.id = s.user_id
+            WHERE s.token = ? AND s.expires_at > ?
+        """, (token, datetime.now(timezone.utc).isoformat()))
+        return c.fetchone()
+
+def delete_session(token):
+    if not token:
+        return False
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        return c.rowcount > 0
+
+def cleanup_expired_sessions():
+    """Periodic GC. Not called automatically — run from a cron or
+    admin tool. Cheap so calling it on every login is fine too.
+    """
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM sessions WHERE expires_at <= ?",
+                  (datetime.now(timezone.utc).isoformat(),))
+        return c.rowcount
+
+
+# ===== Server-side etude storage =====
+# Per-user. Each row is a complete etude (including the precomputed
+# MusicXML) so the Practice page can render without re-stitching.
+# The original local IndexedDB (etudes-store.js) still works for
+# anonymous users — the server-side store is opt-in (admin only).
+
+def save_etude(record):
+    """Create or update a server-side etude. record must include
+    {id, user_id, name, musicxml}; exerciseIds/semitones are optional
+    arrays, stored as JSON.
+    Returns the id.
+    """
+    if not record.get("id"):
+        raise ValueError("record.id is required")
+    if not record.get("user_id"):
+        raise ValueError("record.user_id is required")
+    if not record.get("musicxml"):
+        raise ValueError("record.musicxml is required")
+    if not record.get("name"):
+        raise ValueError("record.name is required")
+    ex_ids = record.get("exerciseIds") or []
+    semis = record.get("semitones") or []
+    # Default semitones to 0 per exercise if mismatched.
+    if len(semis) != len(ex_ids):
+        semis = [0] * len(ex_ids)
+    note_count = record.get("noteCount") or 0
+    source = record.get("source") or "composer"
+    now = datetime.now(timezone.utc).isoformat()
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO etudes (id, user_id, name, exercise_ids_json, semitones_json,
+                                musicxml, source, note_count, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                exercise_ids_json = excluded.exercise_ids_json,
+                semitones_json = excluded.semitones_json,
+                musicxml = excluded.musicxml,
+                source = excluded.source,
+                note_count = excluded.note_count,
+                updated_at = excluded.updated_at
+        """, (
+            record["id"], record["user_id"], record["name"],
+            json.dumps(ex_ids), json.dumps(semis),
+            record["musicxml"], source, note_count,
+            now, now,
+        ))
+    return record["id"]
+
+def list_etudes_for_user(user_id):
+    """All etudes owned by this user, newest first. Returns rows
+    (sqlite3.Row) — the caller can convert with dict(r)."""
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM etudes
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        """, (user_id,))
+        return c.fetchall()
+
+def get_etude_for_user(etude_id, user_id):
+    """Look up a specific etude, but only if it belongs to the user."""
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            SELECT * FROM etudes
+            WHERE id = ? AND user_id = ?
+        """, (etude_id, user_id))
+        return c.fetchone()
+
+def delete_etude_for_user(etude_id, user_id):
+    """Delete an etude, but only if it belongs to the user."""
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM etudes WHERE id = ? AND user_id = ?",
+                  (etude_id, user_id))
+        return c.rowcount > 0
+
+def rename_etude_for_user(etude_id, user_id, new_name):
+    new_name = (new_name or "").strip()
+    if not new_name:
+        return False
+    with _LOCK, get_db() as conn:
+        c = conn.cursor()
+        c.execute("""
+            UPDATE etudes
+            SET name = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+        """, (new_name, datetime.now(timezone.utc).isoformat(),
+              etude_id, user_id))
+        return c.rowcount > 0
+
+def row_to_etude_dict(row):
+    """Convert an etudes-table row to the dict shape that
+    etudes-store.js / practice.js expect. JSON arrays are parsed
+    back to Python lists.
+    """
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "exerciseIds": json.loads(row["exercise_ids_json"] or "[]"),
+        "semitones": json.loads(row["semitones_json"] or "[]"),
+        "musicxml": row["musicxml"],
+        "source": row["source"],
+        "noteCount": row["note_count"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
 
 
 # Initialize on import

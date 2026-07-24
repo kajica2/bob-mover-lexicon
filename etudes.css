@@ -796,3 +796,40 @@
 .toast.error {
   background: #8a2424;
 }
+
+/* Admin login / server etudes (v41) */
+.admin-area {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+}
+.admin-login-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-login-form[hidden] { display: none; }
+.admin-status[hidden] { display: none; }
+.admin-login-form .input {
+  padding: 4px 8px;
+  font-size: 12px;
+  width: auto;
+  min-width: 120px;
+}
+.admin-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--brass-700, #6b5318);
+  font-weight: 500;
+}
+.admin-status .admin-username {
+  background: var(--brass-100, rgba(200, 168, 90, 0.18));
+  border: 1px solid var(--brass-300, rgba(200, 168, 90, 0.45));
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--brass-700, #6b5318);
+}
+.server-etudes-wrap[hidden] { display: none; }
