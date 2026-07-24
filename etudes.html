@@ -191,6 +191,18 @@
             <p class="muted">Sign in as an admin to upload new items. Anyone can still open items from the list below.</p>
           </div>
           <h4 style="margin-top:18px">Library <span id="curated-count" class="muted">(0)</span></h4>
+          <!-- Admin-only bulk-action toolbar. Hidden by default; shown
+               when an admin is signed in. The "Delete N selected"
+               button stays disabled until the admin picks at least
+               one checkbox. -->
+          <div id="curated-bulk-wrap" class="curated-bulk-wrap" hidden>
+            <div class="curated-bulk-toolbar">
+              <button id="curated-select-all" class="btn btn-ghost btn-sm" type="button">Select all</button>
+              <button id="curated-select-none" class="btn btn-ghost btn-sm" type="button" disabled>Clear</button>
+              <span id="curated-selected-count" class="muted" style="margin-left: 4px;">0 selected</span>
+              <button id="curated-batch-delete" class="btn btn-danger btn-sm" type="button" disabled>Delete selected</button>
+            </div>
+          </div>
           <div id="curated-list" class="curated-list">
             <p class="muted" id="curated-empty">No curated items yet.</p>
           </div>
@@ -238,6 +250,6 @@
   <script src="etudes-server.js?v=41"></script>
   <script src="etudes-curriculum.js?v=41"></script>
   <script src="etudes-stitch.js?v=41"></script>
-  <script src="etudes.js?v=46"></script>
+  <script src="etudes.js?v=47"></script>
 </body>
 </html>

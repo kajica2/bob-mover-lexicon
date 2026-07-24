@@ -487,6 +487,28 @@ def delete_curated_mxl(curated_id):
         )
         return cur.rowcount > 0
 
+def delete_curated_mxl_batch(curated_ids):
+    """Delete many ids in a single transaction. Returns the list of
+    ids that were actually removed (caller may compare against the
+    requested list to spot stale ids that no longer exist)."""
+    if not curated_ids:
+        return []
+    # De-dupe defensively — the client could send the same id twice
+    # and we don't want that to confuse the rowcount accounting.
+    ids = list(dict.fromkeys(curated_ids))
+    placeholders = ",".join("?" for _ in ids)
+    with get_db() as con:
+        cur = con.execute(
+            f"DELETE FROM curated_mxl WHERE id IN ({placeholders})",
+            ids,
+        )
+        removed = cur.rowcount
+    # We don't know which specific rows were deleted (the driver
+    # doesn't surface that for IN clauses portably), but the count
+    # is enough for the client to know whether the request
+    # succeeded end-to-end. The caller can re-list to reconcile.
+    return removed
+
 
 # ===== Users / auth =====
 # PBKDF2-HMAC-SHA256 password hashing. 200k iterations + 16-byte salt

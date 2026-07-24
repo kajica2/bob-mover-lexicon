@@ -155,6 +155,13 @@
       var noAdmin = document.getElementById('curated-no-admin');
       if (uploadWrap) uploadWrap.hidden = !isAdmin;
       if (noAdmin) noAdmin.hidden = isAdmin;
+      // Bulk-action toolbar is admin-only. When the viewer switches
+      // from admin to non-admin we drop any pending selection so a
+      // future admin re-login doesn't accidentally act on items
+      // that no longer exist.
+      var bulkWrap = document.getElementById('curated-bulk-wrap');
+      if (bulkWrap) bulkWrap.hidden = !isAdmin;
+      if (!isAdmin) _curatedSelected.clear();
       refreshCuratedList(isAdmin);
     });
   }
@@ -198,6 +205,62 @@
         handleCuratedUpload();
       });
     }
+    // Bulk-action toolbar. Each button is wired to its own handler;
+    // the toolbar itself is shown/hidden by refreshAdminStatus
+    // based on whether the viewer is an admin.
+    var selectAll = document.getElementById('curated-select-all');
+    if (selectAll) selectAll.addEventListener('click', function () {
+      curatedSelectAll();
+    });
+    var selectNone = document.getElementById('curated-select-none');
+    if (selectNone) selectNone.addEventListener('click', function () {
+      curatedSelectNone();
+    });
+    var batchDel = document.getElementById('curated-batch-delete');
+    if (batchDel) batchDel.addEventListener('click', function () {
+      handleCuratedBatchDelete();
+    });
+  }
+
+  // ---------- Curated bulk-select state ----------
+  // Module-scoped Set so the selection survives re-renders
+  // (refreshCuratedList rebuilds the list DOM from scratch each
+  // time). When a card is re-rendered, it consults this Set to
+  // restore its checked state.
+  var _curatedSelected = new Set();
+  function curatedIsSelected(id) { return _curatedSelected.has(id); }
+  function curatedSelectOne(id, checkbox) {
+    if (checkbox.checked) _curatedSelected.add(id);
+    else _curatedSelected.delete(id);
+    curatedUpdateBulkToolbar();
+  }
+  function curatedSelectAll() {
+    document.querySelectorAll('#curated-list .curated-checkbox').forEach(function (cb) {
+      cb.checked = true;
+      _curatedSelected.add(cb.value);
+    });
+    curatedUpdateBulkToolbar();
+  }
+  function curatedSelectNone() {
+    document.querySelectorAll('#curated-list .curated-checkbox').forEach(function (cb) {
+      cb.checked = false;
+    });
+    _curatedSelected.clear();
+    curatedUpdateBulkToolbar();
+  }
+  function curatedUpdateBulkToolbar() {
+    var n = _curatedSelected.size;
+    var lbl = document.getElementById('curated-selected-count');
+    if (lbl) lbl.textContent = n + ' selected';
+    var del = document.getElementById('curated-batch-delete');
+    if (del) del.disabled = n === 0;
+    var clear = document.getElementById('curated-select-none');
+    if (clear) clear.disabled = n === 0;
+    // "Select all" only makes sense if there's at least one item.
+    var list = document.getElementById('curated-list');
+    var total = list ? list.querySelectorAll('.curated-checkbox').length : 0;
+    var selectAll = document.getElementById('curated-select-all');
+    if (selectAll) selectAll.disabled = total === 0;
   }
 
   function refreshCuratedList(isAdmin) {
@@ -217,19 +280,52 @@
         empty.id = 'curated-empty';
         empty.textContent = 'No curated items yet.';
         list.appendChild(empty);
-        return;
+        // Fall through to the toolbar refresh so the "N selected"
+        // label + Delete button reset when the list is emptied
+        // (e.g. after a batch delete removes the last item).
+      } else {
+        items.forEach(function (c) { list.appendChild(makeCuratedCard(c, isAdmin)); });
       }
-      items.forEach(function (c) { list.appendChild(makeCuratedCard(c, isAdmin)); });
+      // Sync the bulk-action toolbar with the new DOM: a re-render
+      // may have added/removed cards, so the "Select all" enable
+      // state and the "N selected" label both need a refresh.
+      curatedUpdateBulkToolbar();
     }).catch(function (err) {
       list.innerHTML = '<p class="muted" style="color: var(--danger, #b03030);">Failed to load curated items: ' +
         (err && err.message ? err.message : err) + '</p>';
+      curatedUpdateBulkToolbar();
     });
   }
 
   function makeCuratedCard(c, isAdmin) {
     var card = document.createElement('div');
-    card.className = 'etude-card curated-card';
+    card.className = 'etude-card curated-card' + (isAdmin ? ' etude-card-has-checkbox' : '');
     card.dataset.id = c.id;
+
+    // Admin-only selection checkbox. Lives outside the .etude-info
+    // flex row so the layout doesn't shift when the checkbox
+    // appears/disappears. The bulk-delete toolbar pulls these
+    // values to build its POST body.
+    if (isAdmin) {
+      var checkCell = document.createElement('div');
+      checkCell.className = 'etude-checkbox-cell';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'curated-checkbox';
+      cb.value = c.id;
+      cb.checked = curatedIsSelected(c.id);
+      cb.setAttribute('aria-label', 'Select ' + c.name);
+      cb.addEventListener('change', function () {
+        curatedSelectOne(c.id, cb);
+      });
+      cb.addEventListener('click', function (e) {
+        // Don't let the click bubble to the card — selecting via
+        // checkbox shouldn't open the piece in the practice page.
+        e.stopPropagation();
+      });
+      checkCell.appendChild(cb);
+      card.appendChild(checkCell);
+    }
 
     var info = document.createElement('div');
     info.className = 'etude-info';
@@ -390,6 +486,57 @@
     }).catch(function (err) {
       toast('Delete failed: ' + (err && err.message ? err.message : err), true);
       if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+    });
+  }
+
+  function handleCuratedBatchDelete() {
+    if (!window.etudesServer || !window.etudesServer.isLoggedIn() ||
+        !window.etudesServer.currentUser() ||
+        window.etudesServer.currentUser().role !== 'admin') {
+      toast('Admin login required.', true);
+      return;
+    }
+    var ids = Array.from(_curatedSelected);
+    if (!ids.length) {
+      toast('No items selected.', true);
+      return;
+    }
+    if (!confirm('Delete ' + ids.length + ' curated item' +
+                 (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) {
+      return;
+    }
+    var btn = document.getElementById('curated-batch-delete');
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    var token = (function () {
+      try { return localStorage.getItem('bml_admin_token') || ''; }
+      catch (e) { return ''; }
+    })();
+    fetch('/api/curated-mxl/batch-delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + token,
+      },
+      body: JSON.stringify({ ids: ids }),
+    }).then(function (r) {
+      return r.json().then(function (b) {
+        if (!r.ok) throw new Error((b && b.error) || ('HTTP ' + r.status));
+        return b;
+      });
+    }).then(function (body) {
+      var deleted = body.deleted || 0;
+      var requested = body.requested || ids.length;
+      if (deleted === requested) {
+        toast('Deleted ' + deleted + ' item' + (deleted === 1 ? '' : 's') + '.');
+      } else {
+        toast('Deleted ' + deleted + '/' + requested +
+              ' (some ids were already gone).', true);
+      }
+      _curatedSelected.clear();
+      refreshCuratedList(true);
+    }).catch(function (err) {
+      toast('Batch delete failed: ' + (err && err.message ? err.message : err), true);
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete selected'; }
     });
   }
 

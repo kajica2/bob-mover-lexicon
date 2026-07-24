@@ -1275,6 +1275,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # 'file' field and a 'name' field.
         if path == "/api/curated-mxl":
             return self.handle_curated_upload()
+        # Batch delete — admin only, JSON {"ids": ["cur_…", ...]}.
+        # Placed before the favorites block so a path collision
+        # doesn't accidentally match anything else.
+        if path == "/api/curated-mxl/batch-delete":
+            return self.handle_curated_batch_delete()
 
         # Favorite endpoints. Accepts numeric exercise IDs (e.g. "262")
         # and string etude IDs (e.g. "etude_abc123").
@@ -1316,6 +1321,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         m_cur_del = re.match(r"^/api/curated-mxl/([^/]+)$", path)
         if m_cur_del:
             return self.handle_curated_delete(m_cur_del.group(1))
+        # Batch delete curated MXLs — admin only. POST because we're
+        # sending a JSON body; DELETE-with-body is non-portable.
+        if path == "/api/curated-mxl/batch-delete":
+            return self.handle_curated_batch_delete()
         # Unfavorite (numeric or string ID)
         m_fav = re.match(r"^/api/favorites/([^/]+)$", path)
         if m_fav:
@@ -1913,6 +1922,44 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if db.delete_curated_mxl(curated_id):
             return self.send_json({"ok": True})
         return self.send_json({"error": "Not found"}, 404)
+
+    def handle_curated_batch_delete(self):
+        # Admin-only bulk delete. Body shape: {"ids": ["cur_a", ...]}.
+        # We do it in one DB transaction so a 10-item delete is one
+        # round-trip from the client and one disk write from the
+        # server, instead of N+1 with a per-item DELETE.
+        admin = self._require_admin()
+        if not admin:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+        except Exception:
+            raw = b"{}"
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except Exception:
+            return self.send_json({"error": "Invalid JSON body"}, 400)
+        ids = data.get("ids")
+        if not isinstance(ids, list) or not ids:
+            return self.send_json({"error": "ids must be a non-empty array"}, 400)
+        # Each id must be a string and start with the curated prefix.
+        # Reject anything else up front so a misbehaving client can't
+        # try to delete arbitrary rows.
+        bad = [x for x in ids if not isinstance(x, str) or not x.startswith("cur_")]
+        if bad:
+            return self.send_json(
+                {"error": f"All ids must be 'cur_' strings; got bad: {bad[:3]}"},
+                400,
+            )
+        # Cap the batch size to a sensible number so a runaway client
+        # can't try to nuke the whole table in one request.
+        if len(ids) > 200:
+            return self.send_json(
+                {"error": f"Batch too large: {len(ids)} (max 200)"}, 400,
+            )
+        removed = db.delete_curated_mxl_batch(ids)
+        return self.send_json({"ok": True, "requested": len(ids), "deleted": removed})
 
     @staticmethod
     def _extract_musicxml_from_upload(raw_bytes, filename):

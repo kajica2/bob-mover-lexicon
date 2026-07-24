@@ -745,6 +745,24 @@
   border: 1px solid var(--ink-200, #e0d9c8);
   border-radius: 6px;
 }
+/* Admin-view curated cards get a selection checkbox as the first
+   grid cell, so the template needs an extra leading column. */
+.etude-card.etude-card-has-checkbox {
+  grid-template-columns: auto 1fr auto auto auto;
+  padding-left: 8px;
+}
+.etude-card .etude-checkbox-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.etude-card .etude-checkbox-cell .curated-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--brass-600, #b88927);
+}
 .etude-card .etude-name {
   font-weight: 500;
   color: var(--ink-900, #1a1815);
@@ -818,6 +836,23 @@
   white-space: normal;
   flex: 1 1 auto;
   min-width: 200px;
+}
+/* Admin bulk-action toolbar that sits above the curated list. The
+   "N selected" label + "Delete selected" button are the two
+   pieces that change based on selection state. */
+.curated-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  padding: 6px 10px;
+  background: rgba(180, 140, 60, 0.06);
+  border: 1px solid rgba(180, 140, 60, 0.20);
+  border-radius: 6px;
+}
+.curated-bulk-toolbar #curated-selected-count {
+  flex: 1;
+  font-size: 13px;
 }
 
 /* Empty / error states */
