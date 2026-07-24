@@ -141,10 +141,6 @@
       <div class="ex-card ${isSel ? 'selected' : ''}" data-id="${e.id}">
         <div class="ex-img">
           <img src="exercises_images/${String(e.id).padStart(4, '0')}.png" alt="#${e.id}: ${escapeHtml(e.title)}" loading="lazy">
-          <button class="select-star ${isSel ? 'favorited' : ''}" data-toggle-fav="${e.id}" type="button" aria-label="${isSel ? 'Remove from favorites' : 'Add to favorites'}" title="${isSel ? 'Remove from favorites' : 'Add to favorites'}">
-            <span class="select-star-icon">${isSel ? '★' : '☆'}</span>
-            <span class="select-star-label">${isSel ? 'Added to favorites' : 'Add to favorites'}</span>
-          </button>
         </div>
         <div class="ex-meta">
           <div class="ex-row1">
@@ -158,6 +154,10 @@
           <p class="ex-title">${escapeHtml(e.title)}</p>
           <div class="ex-actions">
             <a class="ex-practice-link" href="./practice/?id=${e.id}">Practice →</a>
+            <button class="select-star ${isSel ? 'favorited' : ''}" data-toggle-fav="${e.id}" type="button" aria-label="${isSel ? 'Remove from favorites' : 'Add to favorites'}" title="${isSel ? 'Remove from favorites' : 'Add to favorites'}">
+              <span class="select-star-icon">${isSel ? '★' : '☆'}</span>
+              <span class="select-star-label">${isSel ? 'Added to favorites' : 'Add to favorites'}</span>
+            </button>
           </div>
         </div>
       </div>

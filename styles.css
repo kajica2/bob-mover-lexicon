@@ -464,23 +464,23 @@ body.range-modal-locked {
   display: block;
 }
 .ex-card .select-star {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  /* Lives at the bottom of the card (in .ex-actions), next to the
+   * Practice link. Pushed to the right edge with margin-left: auto
+   * so the Practice link stays anchored on the left. */
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  margin-left: auto;
+  height: 24px;
   padding: 0 10px 0 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
+  background: transparent;
   border: 1px solid var(--ink-200);
   color: var(--ink-600);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
   transition: transform 0.15s, color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
-  z-index: 2;
   font-family: inherit;
   white-space: nowrap;
   line-height: 1;
