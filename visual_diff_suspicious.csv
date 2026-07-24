@@ -1,0 +1,8 @@
+id,mse,suspicious,error
+183,12073.2,MSE>11458,
+17,10837.7,KNOWN_BROKEN (practice.js static-PNG fallback),
+229,10378.0,KNOWN_BROKEN (practice.js static-PNG fallback),
+132,10357.1,KNOWN_BROKEN (practice.js static-PNG fallback),
+152,10240.8,KNOWN_BROKEN (practice.js static-PNG fallback),
+79,9379.9,KNOWN_BROKEN (practice.js static-PNG fallback),
+168,8885.5,KNOWN_BROKEN (practice.js static-PNG fallback),
