@@ -791,6 +791,13 @@
   // offers a one-click "auto-transpose" path (uses clampToRange
   // which shifts notes by whole octaves) plus the original
   // "save as-is" path.
+  //
+  // v37: added "Fix Enharmonics" button. The current XML is held in
+  // mutable closures (currentFullXml / currentPreviewXml /
+  // currentReport) so the "Fix" button can rewrite the XML, re-render
+  // the SVG, and re-run the range check — and the action buttons
+  // always read the latest state. Mirrors music21's
+  // Pitch.simplifyEnharmonic (E#→F, B#→C, Fb→E, Cb→B, etc.).
   function previewMasterClassEtude(etude, line) {
     var box = document.getElementById('master-class-preview');
     if (!box) return;
@@ -798,10 +805,10 @@
       toast('Master Class builder unavailable.', true);
       return;
     }
-    var fullXml, previewXml;
+    var currentFullXml, currentPreviewXml;
     try {
-      fullXml = window.etudesStitch.buildMasterClassEtude(etude, line);
-      previewXml = window.etudesStitch.buildEtudePreviewXML(etude, line, 8);
+      currentFullXml = window.etudesStitch.buildMasterClassEtude(etude, line);
+      currentPreviewXml = window.etudesStitch.buildEtudePreviewXML(etude, line, 8);
     } catch (e) {
       console.error('buildMasterClassEtude failed', e);
       toast('Build failed: ' + (e && e.message ? e.message : e), true);
@@ -810,12 +817,12 @@
 
     // Range check against the user's saved instrument range.
     var rangeUsed = null;
-    var report = null;
+    var currentReport = null;
     try {
       rangeUsed = getEtudesRange();
       if (window.etudesStitch.validateEtudeNotes) {
-        report = window.etudesStitch.validateEtudeNotes(
-          fullXml, rangeUsed.lowMidi, rangeUsed.highMidi
+        currentReport = window.etudesStitch.validateEtudeNotes(
+          currentFullXml, rangeUsed.lowMidi, rangeUsed.highMidi
         );
       }
     } catch (e) {
@@ -836,9 +843,13 @@
     meta.className = 'mc-preview-meta';
     meta.innerHTML = '<strong>Preview</strong> · first 8 bars · ♩ = ' + etude.bpm;
     header.appendChild(meta);
-    // Range badge: green if all in range, red if any out.
-    if (report) {
-      var badge = document.createElement('span');
+    // Range badge: green if all in range, red if any out. Filled in
+    // by the initial render and updated whenever the XML changes
+    // (e.g. after "Fix Enharmonics" rewrites a pitch).
+    var badge = document.createElement('span');
+    header.appendChild(badge);
+    function paintBadge(report) {
+      if (!report) { badge.textContent = ''; badge.className = ''; return; }
       if (report.ok) {
         badge.className = 'mc-range-badge range-ok';
         badge.textContent = '✓ in range';
@@ -852,16 +863,20 @@
                        midiToNoteName(rangeUsed.lowMidi) + '–' +
                        midiToNoteName(rangeUsed.highMidi) + ').';
       }
-      header.appendChild(badge);
     }
+    paintBadge(currentReport);
     box.appendChild(header);
 
     // Range warning panel (only when there are out-of-range notes).
-    // Lists the specific offending notes and offers a one-click
-    // "auto-transpose" path. The user can still choose to save the
-    // etude as-is (e.g. for a study exercise on extreme ranges) via
-    // the "Save as-is" button.
-    if (report && !report.ok && report.outOfRange.length) {
+    // Re-rendered when the XML changes so the offending-note list
+    // reflects the latest state. Wrapped in a container so we can
+    // tear it down + rebuild on each update.
+    var warnContainer = document.createElement('div');
+    warnContainer.className = 'mc-preview-warn-container';
+    box.appendChild(warnContainer);
+    function paintWarnPanel(report) {
+      warnContainer.innerHTML = '';
+      if (!report || report.ok || !report.outOfRange.length) return;
       var warn = document.createElement('div');
       warn.className = 'mc-range-warning';
       var warnMsg = document.createElement('div');
@@ -885,8 +900,9 @@
         list.appendChild(li);
       }
       warn.appendChild(list);
-      box.appendChild(warn);
+      warnContainer.appendChild(warn);
     }
+    paintWarnPanel(currentReport);
 
     // Verovio SVG of the first 8 bars.
     var svgWrap = document.createElement('div');
@@ -896,7 +912,28 @@
     loadingMsg.textContent = 'Rendering preview…';
     svgWrap.appendChild(loadingMsg);
     box.appendChild(svgWrap);
-    renderSvgForXml(svgWrap, previewXml);
+    renderSvgForXml(svgWrap, currentPreviewXml);
+
+    // Helper: re-render the SVG with the current preview XML. Used
+    // after "Fix Enharmonics" (or any future "transform XML" button).
+    function rerenderSvg() {
+      svgWrap.innerHTML = '<p class="muted">Rendering preview…</p>';
+      renderSvgForXml(svgWrap, currentPreviewXml);
+    }
+    // Helper: re-run the range check + repaint badge + warning.
+    function rerunRangeCheck() {
+      try {
+        if (window.etudesStitch.validateEtudeNotes && rangeUsed) {
+          currentReport = window.etudesStitch.validateEtudeNotes(
+            currentFullXml, rangeUsed.lowMidi, rangeUsed.highMidi
+          );
+          paintBadge(currentReport);
+          paintWarnPanel(currentReport);
+        }
+      } catch (e) {
+        console.warn('re-run range check failed:', e);
+      }
+    }
 
     // Action buttons.
     var actions = document.createElement('div');
@@ -907,24 +944,55 @@
     saveBtn.className = 'btn btn-primary';
     saveBtn.textContent = 'Save & open Practice';
     saveBtn.addEventListener('click', function () {
-      // Build full XML, save, navigate. (Pass the pre-built fullXml
-      // and the cached rangeUsed so we don't redo the build/range work.)
-      saveMasterClassEtude(etude, line, fullXml, rangeUsed, report, /*transposed=*/false);
+      // Read the latest XML + report from the closures (might have
+      // been updated by "Fix Enharmonics" before the user clicked Save).
+      saveMasterClassEtude(etude, line, currentFullXml, rangeUsed, currentReport, /*transposed=*/false);
     });
     actions.appendChild(saveBtn);
+
+    // Fix Enharmonics — always present. Walks the current XML and
+    // rewrites every pitch to its canonical spelling (E#→F, B#→C,
+    // Fb→E, Cb→B, etc.). Re-renders the SVG and re-runs the range
+    // check so the user sees the result immediately. The "Save" and
+    // "Auto-transpose" buttons then use the updated XML on click.
+    // Useful when the user has hand-transposed a stitched etude and
+    // ended up with awkward enharmonics, or when a curriculum edit
+    // happens to introduce them.
+    var fixBtn = document.createElement('button');
+    fixBtn.className = 'btn btn-ghost';
+    fixBtn.textContent = 'Fix Enharmonics';
+    fixBtn.title = 'Rewrite every pitch to its canonical spelling (E#→F, Fb→E, etc.)';
+    fixBtn.addEventListener('click', function () {
+      if (!window.etudesStitch || !window.etudesStitch.simplifyEnharmonicXml) {
+        toast('Enharmonic helper unavailable.', true);
+        return;
+      }
+      try {
+        currentFullXml = window.etudesStitch.simplifyEnharmonicXml(currentFullXml);
+        currentPreviewXml = window.etudesStitch.simplifyEnharmonicXml(currentPreviewXml);
+      } catch (e) {
+        console.error('simplifyEnharmonicXml failed', e);
+        toast('Fix failed: ' + (e && e.message ? e.message : e), true);
+        return;
+      }
+      rerenderSvg();
+      rerunRangeCheck();
+      toast('Enharmonics simplified.');
+    });
+    actions.appendChild(fixBtn);
 
     // Auto-transpose + Save — only when there are out-of-range notes.
     // Uses clampToRange to shift notes by whole octaves. The
     // resulting XML is built + validated again before saving.
-    if (report && !report.ok && report.outOfRange.length) {
+    if (currentReport && !currentReport.ok && currentReport.outOfRange.length) {
       var transposeBtn = document.createElement('button');
       transposeBtn.className = 'btn btn-ghost';
       transposeBtn.textContent = 'Auto-transpose & save';
       transposeBtn.title = 'Shift out-of-range notes by whole octaves to fit your range';
       transposeBtn.addEventListener('click', function () {
-        var xmlToSave = fullXml;
+        var xmlToSave = currentFullXml;
         try {
-          var clamped = window.etudesStitch.clampToRange(fullXml, rangeUsed.lowMidi, rangeUsed.highMidi);
+          var clamped = window.etudesStitch.clampToRange(currentFullXml, rangeUsed.lowMidi, rangeUsed.highMidi);
           if (clamped.moved > 0) {
             xmlToSave = clamped.xml;
             toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
@@ -934,7 +1002,7 @@
         } catch (e) {
           console.warn('clampToRange failed (saving original):', e);
         }
-        saveMasterClassEtude(etude, line, xmlToSave, rangeUsed, report, /*transposed=*/true);
+        saveMasterClassEtude(etude, line, xmlToSave, rangeUsed, currentReport, /*transposed=*/true);
       });
       actions.appendChild(transposeBtn);
     }
@@ -951,10 +1019,10 @@
     actions.appendChild(cancelBtn);
 
     // A small note when the line has range + big-jump warnings.
-    if (report && !report.ok && report.bigJumps.length) {
+    if (currentReport && !currentReport.ok && currentReport.bigJumps.length) {
       var note = document.createElement('span');
       note.className = 'mc-preview-note';
-      note.textContent = '· ' + report.bigJumps.length + ' jump(s) > 7th — saved as-is, see console';
+      note.textContent = '· ' + currentReport.bigJumps.length + ' jump(s) > 7th — saved as-is, see console';
       actions.appendChild(note);
     }
 

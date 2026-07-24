@@ -555,6 +555,99 @@
     return buildMasterClassEtude(etude, line, limit);
   }
 
+  // Walk a MusicXML string and replace every <pitch>...</pitch>
+  // block with its simplest enharmonic spelling. Mirrors music21's
+  // Pitch.simplifyEnharmonic: E#→F, B#→C, Fb→E, Cb→B, and so on.
+  // Useful for the "Fix Enharmonics" button in the etudes preview
+  // pane: when an etude has been transposed (or hand-edited) and
+  // ends up with awkward enharmonics like E# or Fb, one click
+  // rewrites every pitch to the canonical sharp-or-natural form.
+  //
+  // Algorithm:
+  //   1. For each <note>...</note> block with a <pitch>, extract
+  //      step (may be 'C' or 'C#' or 'Db'), alter, octave.
+  //   2. Roll any '#' / 'b' suffix on the step into the alter
+  //      (so 'C#' + alter=0 == 'C' + alter=1).
+  //   3. Compute MIDI from the normalised (step, alter, octave).
+  //   4. Map the MIDI's pitch class to the canonical spelling:
+  //      white keys (C, D, E, F, G, A, B) keep their natural name;
+  //      black keys take the sharp form (C#, D#, F#, G#, A#).
+  //      This means E#→F (MIDI 5), B#→C-octave+1 (MIDI 12 wraps),
+  //      Fb→E (MIDI 4), Cb→B-octave-1, etc.
+  //   5. Recompute the octave for the new spelling — necessary
+  //      because C and B straddle an octave boundary (B#4 becomes
+  //      C5, Cb4 becomes B3).
+  //
+  // Returns a new MusicXML string with the simplified pitches. If
+  // the input is invalid or empty, returns it unchanged.
+  function simplifyEnharmonicXml(xml) {
+    if (!xml || typeof xml !== 'string') return xml;
+    // Match every <note>...</note> block that has a <pitch>.
+    // We don't need to worry about rests or chord tones — they
+    // don't have <pitch> and so don't match.
+    const noteRe = /<note>\s*<pitch>[\s\S]*?<\/pitch>[\s\S]*?<\/note>/g;
+    return xml.replace(noteRe, function (noteBlock) {
+      const stepM = /<step>\s*([A-Ga-g][#b]?)\s*<\/step>/.exec(noteBlock);
+      const altM  = /<alter>\s*(-?\d+)\s*<\/alter>/.exec(noteBlock);
+      const octM  = /<octave>\s*(-?\d+)\s*<\/octave>/.exec(noteBlock);
+      if (!stepM || !octM) return noteBlock;
+      // Normalise the step: roll any '#' / 'b' suffix into the alter.
+      let cleanStep = stepM[1].charAt(0).toUpperCase();
+      let accidental = 0;
+      if (stepM[1].length === 2) {
+        const suffix = stepM[1].charAt(1);
+        if (suffix === '#') accidental = 1;
+        else if (suffix === 'b') accidental = -1;
+      }
+      const totalAlter = (altM ? parseInt(altM[1], 10) : 0) + accidental;
+      const octave = parseInt(octM[1], 10);
+      // Compute MIDI.
+      const baseOffset = STEP_TO_OFFSET[cleanStep];
+      if (baseOffset === undefined) return noteBlock;
+      const midi = (octave + 1) * 12 + baseOffset + totalAlter;
+      // Canonical spelling table: pitch class → simplest step+alter.
+      // White keys take their natural name; black keys take the
+      // sharp form (no Db/Gb/Ab — those are valid but not "simplest"
+      // in the music21 sense).
+      const pc = ((midi % 12) + 12) % 12;
+      const CANONICAL = [
+        { step: 'C', alter: 0 },  // 0
+        { step: 'C', alter: 1 },  // 1  C# (was Cb or B# → C)
+        { step: 'D', alter: 0 },  // 2
+        { step: 'D', alter: 1 },  // 3  D# (was Eb)
+        { step: 'E', alter: 0 },  // 4
+        { step: 'F', alter: 0 },  // 5  (was Fb or E#)
+        { step: 'F', alter: 1 },  // 6  F# (was Gb)
+        { step: 'G', alter: 0 },  // 7
+        { step: 'G', alter: 1 },  // 8  G# (was Ab)
+        { step: 'A', alter: 0 },  // 9
+        { step: 'A', alter: 1 },  // 10 A# (was Bb)
+        { step: 'B', alter: 0 },  // 11 (was Cb or B# → B/C — handled by octave bump)
+      ];
+      const canonical = CANONICAL[pc];
+      // Recompute the octave for the new spelling. C and B straddle
+      // an octave boundary, so B#4 (MIDI 72) becomes C5 (octave+1)
+      // and Cb4 (MIDI 59) becomes B3 (octave-1). For all other
+      // pitch classes the octave stays the same.
+      const newOctave = Math.floor(midi / 12) - 1;
+      // If the result is the same as the input, no rewrite needed.
+      // This is a quick no-op check that avoids touching the XML
+      // when the spelling is already canonical.
+      if (cleanStep === canonical.step &&
+          (altM ? parseInt(altM[1], 10) : 0) === canonical.alter &&
+          parseInt(octM[1], 10) === newOctave) {
+        return noteBlock;
+      }
+      const newPitch =
+        '<pitch>' +
+          '<step>' + canonical.step + '</step>' +
+          (canonical.alter === 0 ? '' : '<alter>' + canonical.alter + '</alter>') +
+          '<octave>' + newOctave + '</octave>' +
+        '</pitch>';
+      return noteBlock.replace(/<pitch>[\s\S]*?<\/pitch>/, newPitch);
+    });
+  }
+
   // Count <note> elements in a Master-Class-generated MusicXML string.
   // Mirrors countNotes() above but only counts non-rest notes — useful
   // for the saved-etudes card display ("4 notes" not "8 notes with 4
@@ -727,6 +820,7 @@
     clampToRange: clampToRange,
     buildMasterClassEtude: buildMasterClassEtude,
     buildEtudePreviewXML: buildEtudePreviewXML,
+    simplifyEnharmonicXml: simplifyEnharmonicXml,
     countPitchedNotes: countPitchedNotes,
     validateEtudeNotes: validateEtudeNotes,
   };
