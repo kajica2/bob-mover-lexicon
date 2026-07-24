@@ -769,7 +769,7 @@
           btn.appendChild(desc);
         }
         btn.addEventListener('click', function () {
-          generateMasterClassEtude(etude, line);
+          previewMasterClassEtude(etude, line);
         });
         linesWrap.appendChild(btn);
       });
@@ -779,93 +779,232 @@
     });
   }
 
+  // Show a preview of a Master Class etude line before saving. v36:
+  // the user wants to see the first 8 bars of notation + a range
+  // check against their saved instrument range, and only then
+  // commit to save + navigate. This avoids the surprise of
+  // discovering an out-of-range note 30 seconds into a practice
+  // session. The preview renders the first 8 bars via Verovio (the
+  // same lazy loader as the composer mode) and shows a green or
+  // red range badge depending on whether every pitched note lands
+  // within [userLow, userHigh]. If out-of-range, an action button
+  // offers a one-click "auto-transpose" path (uses clampToRange
+  // which shifts notes by whole octaves) plus the original
+  // "save as-is" path.
+  function previewMasterClassEtude(etude, line) {
+    var box = document.getElementById('master-class-preview');
+    if (!box) return;
+    if (!window.etudesStitch || !window.etudesStitch.buildEtudePreviewXML) {
+      toast('Master Class builder unavailable.', true);
+      return;
+    }
+    var fullXml, previewXml;
+    try {
+      fullXml = window.etudesStitch.buildMasterClassEtude(etude, line);
+      previewXml = window.etudesStitch.buildEtudePreviewXML(etude, line, 8);
+    } catch (e) {
+      console.error('buildMasterClassEtude failed', e);
+      toast('Build failed: ' + (e && e.message ? e.message : e), true);
+      return;
+    }
+
+    // Range check against the user's saved instrument range.
+    var rangeUsed = null;
+    var report = null;
+    try {
+      rangeUsed = getEtudesRange();
+      if (window.etudesStitch.validateEtudeNotes) {
+        report = window.etudesStitch.validateEtudeNotes(
+          fullXml, rangeUsed.lowMidi, rangeUsed.highMidi
+        );
+      }
+    } catch (e) {
+      console.warn('range check failed (continuing):', e);
+    }
+
+    // Render the preview pane.
+    box.innerHTML = '';
+    box.classList.add('visible');
+
+    var header = document.createElement('div');
+    header.className = 'mc-preview-header';
+    var title = document.createElement('div');
+    title.className = 'mc-preview-title';
+    title.textContent = etude.title + ' — ' + line.name;
+    header.appendChild(title);
+    var meta = document.createElement('div');
+    meta.className = 'mc-preview-meta';
+    meta.innerHTML = '<strong>Preview</strong> · first 8 bars · ♩ = ' + etude.bpm;
+    header.appendChild(meta);
+    // Range badge: green if all in range, red if any out.
+    if (report) {
+      var badge = document.createElement('span');
+      if (report.ok) {
+        badge.className = 'mc-range-badge range-ok';
+        badge.textContent = '✓ in range';
+        badge.title = 'Every note fits within your instrument range (' +
+                       midiToNoteName(rangeUsed.lowMidi) + '–' +
+                       midiToNoteName(rangeUsed.highMidi) + ').';
+      } else {
+        badge.className = 'mc-range-badge range-bad';
+        badge.textContent = '⚠ ' + report.outOfRange.length + ' outside range';
+        badge.title = 'Some notes fall outside your instrument range (' +
+                       midiToNoteName(rangeUsed.lowMidi) + '–' +
+                       midiToNoteName(rangeUsed.highMidi) + ').';
+      }
+      header.appendChild(badge);
+    }
+    box.appendChild(header);
+
+    // Range warning panel (only when there are out-of-range notes).
+    // Lists the specific offending notes and offers a one-click
+    // "auto-transpose" path. The user can still choose to save the
+    // etude as-is (e.g. for a study exercise on extreme ranges) via
+    // the "Save as-is" button.
+    if (report && !report.ok && report.outOfRange.length) {
+      var warn = document.createElement('div');
+      warn.className = 'mc-range-warning';
+      var warnMsg = document.createElement('div');
+      warnMsg.innerHTML = '<strong>Out-of-range notes:</strong> ' +
+        report.outOfRange.length + ' note(s) fall outside your saved ' +
+        'instrument range. Use <em>Auto-transpose</em> to shift them ' +
+        'by whole octaves, or <em>Save as-is</em> to keep the original ' +
+        'pitches (useful for studying extreme registers).';
+      warn.appendChild(warnMsg);
+      var list = document.createElement('ul');
+      for (var i = 0; i < report.outOfRange.length; i++) {
+        var v = report.outOfRange[i];
+        var p = v.pitch;
+        var step = p.step;
+        if (p.alter === 1) step += '#';
+        else if (p.alter === -1) step += 'b';
+        var li = document.createElement('li');
+        li.textContent = 'bar ' + (v.measureIndex + 1) + ', ' + step + p.octave +
+                         ' (MIDI ' + v.midi + ', range ' +
+                         midiToNoteName(v.low) + '–' + midiToNoteName(v.high) + ')';
+        list.appendChild(li);
+      }
+      warn.appendChild(list);
+      box.appendChild(warn);
+    }
+
+    // Verovio SVG of the first 8 bars.
+    var svgWrap = document.createElement('div');
+    svgWrap.className = 'mc-preview-svg';
+    var loadingMsg = document.createElement('p');
+    loadingMsg.className = 'muted';
+    loadingMsg.textContent = 'Rendering preview…';
+    svgWrap.appendChild(loadingMsg);
+    box.appendChild(svgWrap);
+    renderSvgForXml(svgWrap, previewXml);
+
+    // Action buttons.
+    var actions = document.createElement('div');
+    actions.className = 'mc-preview-actions';
+
+    // Save & Practice — the primary action. Always present.
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = 'Save & open Practice';
+    saveBtn.addEventListener('click', function () {
+      // Build full XML, save, navigate. (Pass the pre-built fullXml
+      // and the cached rangeUsed so we don't redo the build/range work.)
+      saveMasterClassEtude(etude, line, fullXml, rangeUsed, report, /*transposed=*/false);
+    });
+    actions.appendChild(saveBtn);
+
+    // Auto-transpose + Save — only when there are out-of-range notes.
+    // Uses clampToRange to shift notes by whole octaves. The
+    // resulting XML is built + validated again before saving.
+    if (report && !report.ok && report.outOfRange.length) {
+      var transposeBtn = document.createElement('button');
+      transposeBtn.className = 'btn btn-ghost';
+      transposeBtn.textContent = 'Auto-transpose & save';
+      transposeBtn.title = 'Shift out-of-range notes by whole octaves to fit your range';
+      transposeBtn.addEventListener('click', function () {
+        var xmlToSave = fullXml;
+        try {
+          var clamped = window.etudesStitch.clampToRange(fullXml, rangeUsed.lowMidi, rangeUsed.highMidi);
+          if (clamped.moved > 0) {
+            xmlToSave = clamped.xml;
+            toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
+          } else {
+            toast('No notes needed shifting (clampToRange found no moves).');
+          }
+        } catch (e) {
+          console.warn('clampToRange failed (saving original):', e);
+        }
+        saveMasterClassEtude(etude, line, xmlToSave, rangeUsed, report, /*transposed=*/true);
+      });
+      actions.appendChild(transposeBtn);
+    }
+
+    // Cancel — hide the preview. Useful if the user picked the
+    // wrong line and wants to start over without leaving the page.
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-ghost';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function () {
+      box.classList.remove('visible');
+      box.innerHTML = '';
+    });
+    actions.appendChild(cancelBtn);
+
+    // A small note when the line has range + big-jump warnings.
+    if (report && !report.ok && report.bigJumps.length) {
+      var note = document.createElement('span');
+      note.className = 'mc-preview-note';
+      note.textContent = '· ' + report.bigJumps.length + ' jump(s) > 7th — saved as-is, see console';
+      actions.appendChild(note);
+    }
+
+    box.appendChild(actions);
+
+    // Scroll the preview into view so the user sees the result
+    // without having to hunt for it. (Smooth scroll is fine on
+    // desktop; on mobile the focus jump is enough.)
+    try { box.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
+  }
+
+  // Convert a MIDI number to a note name string for the range badge
+  // tooltips (e.g. MIDI 60 = "C4", MIDI 57 = "A3"). Mirrors the
+  // practice.js note-name logic. Used only in the preview pane.
+  function midiToNoteName(midi) {
+    var NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    var pc = ((midi % 12) + 12) % 12;
+    var octave = Math.floor(midi / 12) - 1;
+    return NAMES[pc] + octave;
+  }
+
   // Build a Master Class etude's MusicXML in-browser, save to IDB, and
   // jump to /practice/?id=etude_xxx. Mirrors the composer/random save
   // flow (toast on success, redirect after 600ms) but uses the
   // dedicated Master Class builder rather than stitching server
   // sources. `source: 'master-class'` on the IDB record means the
   // saved-etudes card shows a distinct badge.
-  async function generateMasterClassEtude(etude, line) {
-    if (!window.etudesStitch || !window.etudesStitch.buildMasterClassEtude) {
-      toast('Master Class builder unavailable.', true);
+  //
+  // v36: refactored to accept a pre-built XML (built by the preview
+  // pane) and a cached rangeUsed/report. The preview flow builds
+  // the XML once, runs the range check, and on user confirmation
+  // hands the result to this function. If the user picked
+  // auto-transpose, the caller passes the clamped XML and sets
+  // transposed=true so we can show the right toast.
+  async function saveMasterClassEtude(etude, line, xml, rangeUsed, report, transposed) {
+    if (!xml) {
+      toast('No MusicXML to save.', true);
       return;
     }
-    let xml;
-    try {
-      xml = window.etudesStitch.buildMasterClassEtude(etude, line);
-    } catch (e) {
-      console.error('buildMasterClassEtude failed', e);
-      toast('Build failed: ' + (e && e.message ? e.message : e), true);
-      return;
-    }
-    // Light range check: don't clamp (the builder writes sax-friendly
-    // pitches already) but warn if anything falls outside the user's
-    // saved range so a future curriculum edit doesn't silently produce
-    // out-of-range notes.
-    let rangeUsed = null;
-    try {
-      const r = getEtudesRange();
-      rangeUsed = r;
-      const clamped = window.etudesStitch.clampToRange(xml, r.lowMidi, r.highMidi);
-      if (clamped.moved > 0) {
-        toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
-        xml = clamped.xml;
-      }
-    } catch (e) {
-      console.warn('clampToRange failed for master-class etude (continuing):', e);
+
+    // Big-jump warning (if the report had any). These are saved as-is
+    // — the user already saw the warning in the preview pane.
+    if (report && !report.ok && report.bigJumps.length) {
+      console.warn('[mc] big jumps (saved as-is):', report.bigJumps);
     }
 
-    // v33: validate the final XML against the user's range and a
-    // max-interval check (no jump > 7th = 11 semitones). We warn
-    // (don't block) so the user still gets the etude to practice,
-    // but with a clear heads-up that the line has either an
-    // out-of-range note or a vocal-leap bigger than a 7th. The
-    // curriculum's pitches are alto-sax-friendly so a clean run is
-    // the norm; warnings mean either a future curriculum edit
-    // pushed a note out of range, or a future curriculum change
-    // introduced a big jump that needs splitting into two lines.
-    if (rangeUsed && window.etudesStitch.validateEtudeNotes) {
-      try {
-        const report = window.etudesStitch.validateEtudeNotes(
-          xml, rangeUsed.lowMidi, rangeUsed.highMidi
-        );
-        if (!report.ok) {
-          const parts = [];
-          if (report.outOfRange.length) {
-            parts.push(
-              report.outOfRange.length + ' note(s) outside range'
-            );
-          }
-          if (report.bigJumps.length) {
-            parts.push(
-              report.bigJumps.length + ' jump(s) wider than a 7th'
-            );
-          }
-          if (parts.length) {
-            // .error class makes the toast red; user can still
-            // proceed to practice the etude.
-            toast(
-              '⚠ ' + line.name + ': ' + parts.join(', ') + '.',
-              true
-            );
-            // Log the specific violations to the console for debugging.
-            if (report.outOfRange.length) {
-              console.warn('[mc] out-of-range notes:', report.outOfRange);
-            }
-            if (report.bigJumps.length) {
-              console.warn('[mc] big jumps:', report.bigJumps);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('validateEtudeNotes failed (continuing):', e);
-      }
-    }
-
-    const pitchedCount = window.etudesStitch.countPitchedNotes(xml);
-    const name = 'MC ' + etude.id.replace(/^mc-/, '').replace(/-/g, ' ') +
+    var pitchedCount = window.etudesStitch.countPitchedNotes(xml);
+    var name = 'MC ' + etude.id.replace(/^mc-/, '').replace(/-/g, ' ') +
                  ' — ' + line.name;
-    const id = window.etudesStore.newId();
+    var id = window.etudesStore.newId();
     try {
       await window.etudesStore.saveEtude({
         id: id,
@@ -881,6 +1020,7 @@
           lineName: line.name,
           mc: etude.mc,
           bpm: etude.bpm,
+          transposed: !!transposed,
         },
       });
     } catch (e) {

@@ -89,9 +89,17 @@
             Six pre-built pedagogical etudes distilled from the Bob Mover Master Class series.
             Each etude isolates a single concept (voice leading, chromatic passageway, harmonic
             shift, melodic paraphrase, the pocket, and symmetrical key shifts). Click any line
-            to generate, save, and jump to the practice page.
+            to preview the first 8 bars, confirm the range, then save and jump to the practice
+            page.
           </p>
           <div id="master-class-list" class="master-class-list"></div>
+          <!-- Preview pane. Hidden until the user clicks a line. Shows
+               the Verovio SVG of the first 8 bars, a range check
+               against the user's saved instrument range, and the
+               action buttons (Save & Practice, or Transpose+Save if
+               the line falls outside the range). The same Verovio
+               lazy-loader as the composer mode is reused. -->
+          <div id="master-class-preview" class="mc-preview"></div>
         </section>
       </div>
 
@@ -152,8 +160,8 @@
   </main>
 
   <script src="etudes-store.js"></script>
-  <script src="etudes-curriculum.js?v=35"></script>
-  <script src="etudes-stitch.js?v=35"></script>
-  <script src="etudes.js?v=35"></script>
+  <script src="etudes-curriculum.js?v=36"></script>
+  <script src="etudes-stitch.js?v=36"></script>
+  <script src="etudes.js?v=36"></script>
 </body>
 </html>

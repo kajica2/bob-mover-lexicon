@@ -454,7 +454,15 @@
 
   // Main entry point. Returns a complete MusicXML string ready to
   // save to IDB and hand to the practice page's renderScore.
-  function buildMasterClassEtude(etude, line) {
+  //
+  // v36: accepts an optional `maxBars` (default Infinity) so the
+  // preview pane can show the first N bars of a longer etude
+  // (the user wants to see ~8 bars of context before committing
+  // to save+practice). When maxBars is set and is less than the
+  // total bars, we emit only that many measures. Same chord / pitch
+  // handling, same assertions — the only difference is the slice
+  // length at the end.
+  function buildMasterClassEtude(etude, line, maxBars) {
     if (!etude || !line) throw new Error('buildMasterClassEtude: etude and line required');
 
     // Flatten chords → bars into a single ordered list of bar objects.
@@ -462,14 +470,24 @@
     // comment in the measure so anyone reading the raw XML can see the
     // harmonic context. (Verovio ignores comments; this is purely for
     // human debugging.)
-    const flatBars = [];
+    const allBars = [];
     for (let i = 0; i < line.chords.length; i++) {
       const ch = line.chords[i];
       for (let j = 0; j < ch.bars.length; j++) {
-        flatBars.push({ notes: ch.bars[j].notes, chord: ch.name });
+        allBars.push({ notes: ch.bars[j].notes, chord: ch.name });
       }
     }
-    if (!flatBars.length) throw new Error('buildMasterClassEtude: no bars in line');
+    if (!allBars.length) throw new Error('buildMasterClassEtude: no bars in line');
+
+    // v36: truncate to maxBars if specified. The bar-beat assertion
+    // in buildBarXml still runs on every emitted bar, so a data error
+    // in the curriculum fails loud whether we're previewing or
+    // saving.
+    const barLimit = (typeof maxBars === 'number' && maxBars > 0)
+      ? Math.min(maxBars, allBars.length)
+      : allBars.length;
+    const flatBars = allBars.slice(0, barLimit);
+    if (!flatBars.length) throw new Error('buildMasterClassEtude: no bars after truncation');
 
     const divisions = 4;  // 1 quarter = 4 divisions (industry default)
     const bpm = etude.bpm || 80;
@@ -524,6 +542,17 @@
         '</part>' +
       '</score-partwise>'
     );
+  }
+
+  // Build a short preview MusicXML of a Master Class etude line,
+  // truncated to the first `maxBars` measures. Used by the
+  // preview pane in the etudes page so the user can see the
+  // notation + range check before committing to save + navigate
+  // to /practice/. Same XML structure as the full version, just
+  // a smaller slice.
+  function buildEtudePreviewXML(etude, line, maxBars) {
+    const limit = (typeof maxBars === 'number' && maxBars > 0) ? maxBars : 8;
+    return buildMasterClassEtude(etude, line, limit);
   }
 
   // Count <note> elements in a Master-Class-generated MusicXML string.
@@ -697,6 +726,7 @@
     countMeasures: countMeasures,
     clampToRange: clampToRange,
     buildMasterClassEtude: buildMasterClassEtude,
+    buildEtudePreviewXML: buildEtudePreviewXML,
     countPitchedNotes: countPitchedNotes,
     validateEtudeNotes: validateEtudeNotes,
   };
