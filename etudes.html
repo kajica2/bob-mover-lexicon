@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Etudes — Bob Mover Jazz Lexicon</title>
   <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="etudes.css">
+  <link rel="stylesheet" href="etudes.css?v=45">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎷</text></svg>">
 </head>
 <body>
@@ -42,6 +42,7 @@
         <button class="mode-tab active" data-mode="composer" role="tab" aria-selected="true">Composer</button>
         <button class="mode-tab" data-mode="master-class" role="tab" aria-selected="false">Master Class</button>
         <button class="mode-tab" data-mode="random" role="tab" aria-selected="false">Generator</button>
+        <button class="mode-tab" data-mode="curated" role="tab" aria-selected="false">★ Curated</button>
       </div>
 
       <!-- COMPOSER MODE -->
@@ -143,6 +144,58 @@
         </section>
       </div>
 
+      <!-- CURATED MODE -->
+      <!-- Admin-only upload + shared library of .mxl files. Anyone can
+           view + open them in the practice page; only admins can
+           add/delete. The server endpoints are /api/curated-mxl (POST
+           = upload, DELETE = remove) and /api/curated-mxl/<id>/mxl
+           (GET = full MusicXML body). The browse page sees these as
+           a "★ Curated" section because server.py splices them into
+           /exercises.json on every request. -->
+      <div id="mode-curated" class="mode-pane">
+        <section class="panel">
+          <p class="muted" style="margin-top:0">
+            Admin-curated MusicXML library. Anyone can open items in the
+            practice page; only admins can upload or delete. Uploaded
+            items also appear in the browse page under a "★ Curated"
+            section.
+          </p>
+          <!-- Admin-only upload widget. Hidden by default; the JS
+               shows it when an admin user is signed in. -->
+          <div id="curated-upload-wrap" class="curated-upload-wrap" hidden>
+            <h4 style="margin-top:0">Upload .mxl</h4>
+            <form id="curated-upload-form" class="curated-upload-form">
+              <label class="composer-field">
+                <span class="label">Display name</span>
+                <input id="curated-name" class="input" placeholder="Autumn Leaves — head" required>
+              </label>
+              <label class="composer-field">
+                <span class="label">Description (optional)</span>
+                <input id="curated-description" class="input" placeholder="A short note about this piece">
+              </label>
+              <label class="composer-field">
+                <span class="label">.mxl file</span>
+                <input id="curated-file" class="input" type="file" accept=".mxl,.xml,application/vnd.recordare.musicxml+xml" required>
+              </label>
+              <div class="composer-row">
+                <button class="btn btn-primary" type="submit">Upload</button>
+                <span id="curated-upload-status" class="muted"></span>
+              </div>
+            </form>
+          </div>
+          <!-- Sign-in nudge for non-admins. Shown when no admin is
+               logged in; clicking it opens the same admin login form
+               as the Composer / Master Class modes. -->
+          <div id="curated-no-admin" class="curated-no-admin" hidden>
+            <p class="muted">Sign in as an admin to upload new items. Anyone can still open items from the list below.</p>
+          </div>
+          <h4 style="margin-top:18px">Library <span id="curated-count" class="muted">(0)</span></h4>
+          <div id="curated-list" class="curated-list">
+            <p class="muted" id="curated-empty">No curated items yet.</p>
+          </div>
+        </section>
+      </div>
+
       <!-- SAVED ETUDES LIST -->
       <section class="saved-etudes panel">
         <div class="saved-etudes-header">
@@ -184,6 +237,6 @@
   <script src="etudes-server.js?v=41"></script>
   <script src="etudes-curriculum.js?v=41"></script>
   <script src="etudes-stitch.js?v=41"></script>
-  <script src="etudes.js?v=44"></script>
+  <script src="etudes.js?v=45"></script>
 </body>
 </html>

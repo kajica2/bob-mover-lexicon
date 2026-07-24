@@ -88,14 +88,17 @@
     // The whole card navigates to the practice page when clicked. The
     // star button is its own toggle target — stop propagation so
     // clicking the star doesn't also fire the card navigation.
+    // Curated items use a string id ("cur_…") — keep the raw value so
+    // the practice page can branch on the prefix.
     grid.querySelectorAll('.ex-card').forEach((el) => {
-      const id = parseInt(el.dataset.id, 10);
+      const rawId = el.dataset.id;
+      const id = /^\d+$/.test(rawId) ? parseInt(rawId, 10) : rawId;
       el.addEventListener('click', (e) => {
         // Don't navigate if the user clicked the star button (it has
         // its own handler that stops propagation, but defensively skip
         // anything inside the star too).
         if (e.target.closest('.select-star')) return;
-        window.location.href = `./practice/?id=${id}`;
+        window.location.href = `./practice/?id=${encodeURIComponent(rawId)}`;
       });
       const star = el.querySelector('.select-star');
       if (star) {
@@ -110,11 +113,16 @@
   }
 
   async function updateStatusIndicators(exercises) {
-    // Fetch practice status for visible exercises
-    const ids = exercises.map((e) => e.id);
-    if (ids.length === 0) return;
+    // Fetch practice status for visible exercises. Curated items
+    // (string ids like "cur_…") have no practice log endpoint — the
+    // server would 400, so we skip them. Their cards don't render the
+    // status indicator at all.
+    const intIds = exercises
+      .map((e) => e.id)
+      .filter((id) => typeof id === 'number' || /^\d+$/.test(String(id)));
+    if (intIds.length === 0) return;
     const summaryMap = {};
-    await Promise.all(ids.slice(0, 60).map(async (id) => {
+    await Promise.all(intIds.slice(0, 60).map(async (id) => {
       try {
         const r = await fetch(`api/practice/exercise/${id}`);
         const data = await r.json();
@@ -122,7 +130,8 @@
       } catch {}
     }));
     document.querySelectorAll('[data-ex-status]').forEach((el) => {
-      const id = parseInt(el.dataset.exStatus, 10);
+      const raw = el.dataset.exStatus;
+      const id = /^\d+$/.test(raw) ? parseInt(raw, 10) : raw;
       const s = summaryMap[id];
       if (s && s.times_practiced) {
         el.className = 'ex-status practiced';
@@ -137,6 +146,34 @@
 
   function exerciseCardHtml(e) {
     const isSel = state.selected.has(e.id);
+    const isStringId = typeof e.id === 'string';
+    // Curated items have a string id, no source PNG, and no
+    // /api/practice/exercise/<id> endpoint. Render a different card
+    // shape so the user sees a clear "this is admin-curated" visual
+    // cue and we never 404 on a missing image.
+    if (isStringId) {
+      const desc = e.curated_description ? `<p class="ex-curated-desc">${escapeHtml(e.curated_description)}</p>` : '';
+      return `
+        <div class="ex-card ex-card-curated ${isSel ? 'selected' : ''}" data-id="${escapeHtml(e.id)}">
+          <div class="ex-curated-badge">★ Curated</div>
+          <div class="ex-meta">
+            <div class="ex-row1">
+              <span class="ex-num">${escapeHtml(e.id)}</span>
+              <span class="ex-section">${escapeHtml(e.section)}</span>
+            </div>
+            <p class="ex-title">${escapeHtml(e.title)}</p>
+            ${desc}
+            <div class="ex-actions">
+              <a class="ex-practice-link" href="./practice/?id=${encodeURIComponent(e.id)}">Practice →</a>
+              <button class="select-star ${isSel ? 'favorited' : ''}" data-toggle-fav="${escapeHtml(e.id)}" type="button" aria-label="${isSel ? 'Remove from favorites' : 'Add to favorites'}" title="${isSel ? 'Remove from favorites' : 'Add to favorites'}">
+                <span class="select-star-icon">${isSel ? '★' : '☆'}</span>
+                <span class="select-star-label">Add to favorites</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="ex-card ${isSel ? 'selected' : ''}" data-id="${e.id}">
         <div class="ex-img">

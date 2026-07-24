@@ -523,6 +523,15 @@
       return;
     }
 
+    // Curated MXL path: server-side .mxl uploaded by the admin.
+    // Same display shape as etudes (no exercises.json entry, no
+    // cycle/range-clamp), but the XML is fetched from the server
+    // instead of from IndexedDB. UI label says "Curated".
+    if (typeof id === 'string' && id.indexOf('cur_') === 0) {
+      await loadCurated(id);
+      return;
+    }
+
     state.currentId = id;
     // Show the original page-cropped PNG from the book under the
     // rendered score. The image is the static source PDF crop (not
@@ -695,6 +704,72 @@
     if (queueEl) queueEl.innerHTML = '<p class="muted">Etudes don\'t use the queue.</p>';
     const recentEl = document.getElementById('recent-list');
     if (recentEl) recentEl.innerHTML = '<p class="muted">No practice log for etudes yet.</p>';
+  }
+
+  // Curated MXL loader: pulls MusicXML from the server. Mirrors the
+  // etude UI (no prev/next, no cycle, no range clamp) but stamps
+  // "★ Curated" instead of "Etudes" so the user can tell where the
+  // piece came from at a glance.
+  async function loadCurated(id) {
+    document.getElementById('score-container').innerHTML = '<div class="score-loading">Loading notation…</div>';
+    state.currentId = id;
+    // Update URL without reload
+    const newUrl = new URL(window.location);
+    newUrl.searchParams.set('id', id);
+    window.history.replaceState({}, '', newUrl);
+    // Header bits
+    document.getElementById('ex-num').textContent = '';
+    document.getElementById('ex-section').textContent = '★ Curated';
+    // Title + page label: pull from the curated metadata endpoint,
+    // fall back to the bare id if the fetch fails.
+    let title = id;
+    try {
+      const r = await fetch(`../api/curated-mxl/${encodeURIComponent(id)}`);
+      if (r.ok) {
+        const d = await r.json();
+        if (d.item && d.item.name) title = d.item.name;
+        if (d.item && d.item.description) {
+          document.getElementById('ex-page').textContent =
+            d.item.description.slice(0, 60);
+        } else {
+          document.getElementById('ex-page').textContent = 'curated · server';
+        }
+      }
+    } catch (e) {
+      document.getElementById('ex-page').textContent = 'curated · server';
+    }
+    document.getElementById('ex-title').textContent = title;
+    // Favorite button: support string ids so the star works.
+    const favBtn = document.getElementById('btn-favorite');
+    if (favBtn) {
+      favBtn.style.visibility = '';
+      applyFavoriteState(favBtn, false);
+      try {
+        const r = await fetch(`../api/favorites/${encodeURIComponent(id)}`);
+        if (r.ok) {
+          const d = await r.json();
+          applyFavoriteState(favBtn, !!d.favorited);
+        }
+      } catch (e) { /* non-fatal */ }
+    }
+    // MusicXML body. The server endpoint handles the "cur_*" branch
+    // and returns the stored <score-partwise> verbatim — no
+    // empty-measure fill, no chord injection.
+    try {
+      const r = await fetch(`../api/musicxml/${encodeURIComponent(id)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const xml = await r.text();
+      await renderScore(xml);
+    } catch (e) {
+      document.getElementById('score-container').innerHTML =
+        '<div class="score-loading">Could not load curated item.<br><small>' +
+        (e && e.message ? e.message : e) + '</small></div>';
+    }
+    // No queue / history / cycle for curated items.
+    const queueEl = document.getElementById('session-queue');
+    if (queueEl) queueEl.innerHTML = '<p class="muted">Curated items don\'t use the queue.</p>';
+    const recentEl = document.getElementById('recent-list');
+    if (recentEl) recentEl.innerHTML = '<p class="muted">No practice log for curated items yet.</p>';
   }
 
   async function loadExerciseHistory(id) {
@@ -1265,7 +1340,11 @@
     const url = new URL(window.location);
     const idParam = url.searchParams.get('id');
     let initialId;
-    if (idParam && idParam.indexOf('etude_') === 0) {
+    if (idParam && (idParam.indexOf('etude_') === 0 ||
+                    idParam.indexOf('cur_') === 0)) {
+      // Etude + curated ids are strings — pass through verbatim so
+      // loadExercise can branch on the prefix. Integer ids go through
+      // parseInt so a missing param defaults to exercise 1.
       initialId = idParam;
     } else {
       initialId = parseInt(idParam || '1', 10);
@@ -1273,21 +1352,29 @@
 
     // Wire up controls
     document.getElementById('btn-prev').addEventListener('click', () => {
-      // Etudes don't have a prev/next — they're finished pieces.
-      if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
+      // Etudes and curated items don't have a prev/next — they're
+      // finished pieces the user opened by hand.
+      if (typeof state.currentId === 'string' &&
+          (state.currentId.indexOf('etude_') === 0 ||
+           state.currentId.indexOf('cur_') === 0)) return;
       const idx = state.exercises.findIndex((e) => e.id === state.currentId);
       if (idx > 0) loadExercise(state.exercises[idx - 1].id);
     });
     document.getElementById('btn-next').addEventListener('click', () => {
-      if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
+      if (typeof state.currentId === 'string' &&
+          (state.currentId.indexOf('etude_') === 0 ||
+           state.currentId.indexOf('cur_') === 0)) return;
       const idx = state.exercises.findIndex((e) => e.id === state.currentId);
       if (idx < state.exercises.length - 1) loadExercise(state.exercises[idx + 1].id);
     });
     document.getElementById('instrument').addEventListener('change', () => {
-      // Etudes are baked-in final scores; their range is whatever the user
-      // chose when generating. Re-rendering them with the active instrument
-      // would just cycle through Verovio's clef rendering, not the data.
-      if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
+      // Etudes and curated items are baked-in final scores; their
+      // range is whatever the user picked at generation / upload time.
+      // Re-rendering them with the active instrument would just cycle
+      // through Verovio's clef rendering, not the data.
+      if (typeof state.currentId === 'string' &&
+          (state.currentId.indexOf('etude_') === 0 ||
+           state.currentId.indexOf('cur_') === 0)) return;
       if (state.currentId) {
         loadExercise(state.currentId);
         // Re-evaluate cycle against new instrument range
@@ -1337,10 +1424,13 @@
   }
 
   document.getElementById('transpose').addEventListener('change', () => {
-    // Etudes are baked-in — the user's chosen semitones are part of the
-    // stitched MusicXML. Transposing here would only re-render the existing
-    // pitches via Verovio, not change the data.
-    if (typeof state.currentId === 'string' && state.currentId.indexOf('etude_') === 0) return;
+    // Etudes and curated items are baked-in — the user's chosen
+    // semitones (etudes) or the admin's chosen pitches (curated) are
+    // part of the stored MusicXML. Transposing here would only
+    // re-render the existing pitches via Verovio, not change the data.
+    if (typeof state.currentId === 'string' &&
+        (state.currentId.indexOf('etude_') === 0 ||
+         state.currentId.indexOf('cur_') === 0)) return;
     if (state.currentId) loadExercise(state.currentId);
   });
 

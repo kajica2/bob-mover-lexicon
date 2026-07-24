@@ -559,6 +559,34 @@ body.range-modal-locked {
   margin-top: 4px;
   flex-wrap: wrap;
 }
+/* Curated-item card: no source PNG, the score lives entirely server-side.
+   The badge sits where the image would normally go so the visual
+   silhouette matches the regular cards. */
+.ex-card-curated {
+  display: flex;
+  flex-direction: column;
+}
+.ex-card-curated .ex-curated-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, rgba(180, 140, 60, 0.10), rgba(180, 140, 60, 0.04));
+  border-bottom: 1px solid var(--brass-200, #e0c98a);
+  color: var(--brass-700, #8a6a20);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  min-height: 120px;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+.ex-card-curated .ex-curated-desc {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  color: var(--ink-600, #5a5040);
+  line-height: 1.4;
+  font-style: italic;
+}
 .ex-card .ex-queue-btn {
   background: var(--brass-50);
   border: 1px solid var(--brass-200);

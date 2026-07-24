@@ -11,3 +11,6 @@ practice.db-journal
 
 # Test data
 /tmp/test_*.pdf
+
+# macOS
+.DS_Store

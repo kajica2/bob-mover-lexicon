@@ -1124,22 +1124,48 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return self.send_json({"error": "Invalid exercise ID"}, 400)
 
         if path.startswith("/api/musicxml/"):
-            try:
-                eid = int(path.rsplit("/", 1)[-1])
-            except ValueError:
-                return self.send_json({"error": "Invalid exercise ID"}, 400)
-            transpose = int(qs.get("transpose", ["0"])[0])
-            instrument = qs.get("instrument", ["concert"])[0]
-            offset = INSTRUMENT_OFFSETS.get(instrument, 0)
-            semitones = transpose + offset
-            xml, ctype = get_musicxml_with_title(eid, semitones)
+            raw_id = path.rsplit("/", 1)[-1]
+            # Curated MXL: string id like "cur_<uuid>". The practice page
+            # already calls /api/musicxml/<id> with whatever id is in the
+            # URL, so we branch on prefix and load the XML inline.
+            #
+            # Curated items are admin-uploaded and assumed pre-cleaned —
+            # we skip the OCR-quirk fixes (fill_empty_measures /
+            # normalize_final_barlines / inject_chord_symbols) that are
+            # tuned for the Lexicon pipeline. We DO still apply the
+            # user-facing transforms: transpose, bass-clef swap, and
+            # range clamp. Transpose in particular is gated by a flag
+            # elsewhere (the practice page skips it for curated ids) so
+            # the admin's chosen key is preserved by default.
+            is_curated = raw_id.startswith("cur_")
+            if is_curated:
+                item = db.get_curated_mxl(raw_id)
+                if not item:
+                    return self.send_json({"error": "Curated item not found"}, 404)
+                xml = item["musicxml"]
+                ctype = "application/vnd.recordare.musicxml+xml"
+                eid = 0
+                semitones = 0
+                instrument = "concert"
+            else:
+                try:
+                    eid = int(raw_id)
+                except ValueError:
+                    return self.send_json({"error": "Invalid exercise ID"}, 400)
+                transpose = int(qs.get("transpose", ["0"])[0])
+                instrument = qs.get("instrument", ["concert"])[0]
+                offset = INSTRUMENT_OFFSETS.get(instrument, 0)
+                semitones = transpose + offset
+                xml, ctype = get_musicxml_with_title(eid, semitones)
             if xml is None:
                 return self.send_json({"error": "MusicXML not available for this exercise"}, 404)
             # Optional user range (from the range modal). Out-of-range notes
             # are octave-shifted so the score always reads in the player's
             # register. Sent by the Practice page whenever the user has a
             # range saved; absent otherwise (cycle path uses a different
-            # mechanism via the JSON body).
+            # mechanism via the JSON body). Applies to curated items too
+            # — a user with a sax range wants their custom piece played
+            # in their register, same as a Lexicon exercise.
             try:
                 user_low  = int(qs.get("low",  [""])[0] or 0) or None
             except (TypeError, ValueError):
@@ -1152,33 +1178,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 user_low, user_high = user_high, user_low
             if user_low is not None and user_high is not None:
                 xml, _ = clamp_notes_to_range(xml, user_low, user_high)
-            # Bass clef swap for bass-family instruments
+            # Bass clef swap for bass-family instruments. Applies to
+            # curated items too — the user wants to read in their clef.
             if instrument in BASS_CLEF_INSTRUMENTS and xml is not None:
                 xml = swap_to_bass_clef(xml)
-            # Normalize every exercise's final barline to a standard
-            # thick-thin "||" so the user can clearly see where the
-            # exercise ends. The committed .mxl files are unchanged;
-            # only the served stream is normalized.
-            if xml is not None:
-                xml = normalize_final_barlines(xml)
-            # Fill empty measures with a placeholder whole rest so
-            # cyclic exercises don't render silent gaps where
-            # Audiveris dropped a whole-note notehead.
-            if xml is not None:
-                xml = fill_empty_measures(xml)
-            # Inject chord symbols from chords.json so cyclic
-            # exercises show the chord progression above each measure.
-            # The chord roots also follow the user's transpose choice
-            # so the harmony stays in lockstep with the transposed
-            # pitches.
-            if xml is not None:
-                try:
-                    xml = inject_chord_symbols(xml, eid, semitones)
-                except Exception as e:
-                    # Chord injection is best-effort; never fail a
-                    # served exercise because of bad chord data.
-                    import sys as _sys
-                    print(f'chord inject failed for {eid}: {e}', file=_sys.stderr)
+            if not is_curated:
+                # Normalize every exercise's final barline to a standard
+                # thick-thin "||" so the user can clearly see where the
+                # exercise ends. The committed .mxl files are unchanged;
+                # only the served stream is normalized.
+                if xml is not None:
+                    xml = normalize_final_barlines(xml)
+                # Fill empty measures with a placeholder whole rest so
+                # cyclic exercises don't render silent gaps where
+                # Audiveris dropped a whole-note notehead.
+                if xml is not None:
+                    xml = fill_empty_measures(xml)
+                # Inject chord symbols from chords.json so cyclic
+                # exercises show the chord progression above each measure.
+                # The chord roots also follow the user's transpose choice
+                # so the harmony stays in lockstep with the transposed
+                # pitches.
+                if xml is not None:
+                    try:
+                        xml = inject_chord_symbols(xml, eid, semitones)
+                    except Exception as e:
+                        # Chord injection is best-effort; never fail a
+                        # served exercise because of bad chord data.
+                        import sys as _sys
+                        print(f'chord inject failed for {eid}: {e}', file=_sys.stderr)
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -1205,6 +1233,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 return self.send_json({"error": "Invalid collection ID"}, 400)
 
+        # Curated MXL — public read, admin-only write.
+        if path == "/api/curated-mxl":
+            return self.handle_curated_list()
+        # /api/curated-mxl/<id>/mxl — full MusicXML body
+        m_cur_mxl = re.match(r"^/api/curated-mxl/([^/]+)/mxl$", path)
+        if m_cur_mxl:
+            return self.handle_curated_mxl(m_cur_mxl.group(1))
+        # /api/curated-mxl/<id> — metadata
+        m_cur_get = re.match(r"^/api/curated-mxl/([^/]+)$", path)
+        if m_cur_get:
+            return self.handle_curated_get(m_cur_get.group(1))
+
+        # /exercises.json — serve the static file, but dynamically
+        # append the curated MXL items as a "★ Curated" section so
+        # the browse page + section dropdowns see them inline.
+        if path == "/exercises.json":
+            return self.handle_exercises_json_with_curated()
+
         # Default: serve static
         return super().do_GET()
 
@@ -1224,6 +1270,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         m_rename = re.match(r"^/api/etudes/([^/]+)/rename$", path)
         if m_rename:
             return self.handle_etude_rename(m_rename.group(1))
+
+        # Curated MXL upload — admin only, multipart/form-data with a
+        # 'file' field and a 'name' field.
+        if path == "/api/curated-mxl":
+            return self.handle_curated_upload()
 
         # Favorite endpoints. Accepts numeric exercise IDs (e.g. "262")
         # and string etude IDs (e.g. "etude_abc123").
@@ -1261,6 +1312,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             etude_id = path.rsplit("/", 1)[-1]
             if etude_id:
                 return self.handle_etude_delete(etude_id)
+        # Delete a curated MXL — admin only
+        m_cur_del = re.match(r"^/api/curated-mxl/([^/]+)$", path)
+        if m_cur_del:
+            return self.handle_curated_delete(m_cur_del.group(1))
         # Unfavorite (numeric or string ID)
         m_fav = re.match(r"^/api/favorites/([^/]+)$", path)
         if m_fav:
@@ -1664,6 +1719,250 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if db.rename_etude_for_user(etude_id, user["id"], data.get("name", "")):
             return self.send_json({"ok": True})
         return self.send_json({"error": "Not found"}, 404)
+
+    # ===== Curated MXL handlers =====
+    # Public list — anyone (logged in or not) can read the curated
+    # library. Auth is only required for upload/delete.
+    def handle_curated_list(self):
+        items = db.list_curated_mxl()
+        return self.send_json({"items": items})
+
+    def handle_curated_get(self, curated_id):
+        item = db.get_curated_mxl(curated_id)
+        if not item:
+            return self.send_json({"error": "Not found"}, 404)
+        # Don't dump the full MusicXML on a metadata-only fetch —
+        # it's heavy and the client only needs it via /mxl.
+        meta = {k: v for k, v in item.items() if k != "musicxml"}
+        return self.send_json({"item": meta})
+
+    def handle_exercises_json_with_curated(self):
+        """Serve the static exercises.json, then splice the curated
+        MXL list in as a "★ Curated" section so the browse page
+        treats them just like the Lexicon exercises. Cache-busts
+        the merge: a fresh server read of the DB on every request,
+        which is cheap (a handful of rows in normal use)."""
+        try:
+            with open(EXERCISES_JSON, "rb") as f:
+                raw = f.read()
+            data = json.loads(raw.decode("utf-8"))
+        except Exception as e:
+            return self.send_json({"error": f"Failed to read exercises.json: {e}"}, 500)
+        # Build the curated exercise rows
+        curated = db.list_curated_mxl()
+        if curated:
+            # Section pseudo-id "★ Curated" (the star renders as
+            # visible glyph; the dot in "Curated" stays the ASCII
+            # word so it sorts cleanly in the dropdown).
+            curated_exercises = []
+            for i, c in enumerate(curated):
+                # Use a string id "cur_<uuid>" that won't collide
+                # with the integer Lexicon ids. The practice page
+                # already branches on string-vs-int for etude_*
+                # loading; we extend that branch to cur_*.
+                curated_exercises.append({
+                    "id": c["id"],
+                    "title": c["name"],
+                    "page": 0,
+                    "image_path": "",
+                    "image_size": [0, 0],
+                    "crop_box_pts": [0, 0, 0, 0],
+                    "section": "★ Curated",
+                    "title_toc": c["name"],
+                    "section_name": "Curated by admin",
+                    "curated_description": c.get("description") or "",
+                    "curated_filename": c.get("original_filename") or "",
+                })
+            data["exercises"] = data.get("exercises", []) + curated_exercises
+            # Make sure the section is in sections_defined so the
+            # browse page's section chips + dropdowns can show it.
+            sections = data.get("sections_defined", [])
+            if not any(s.get("id") == "★ Curated" for s in sections):
+                sections.append({"id": "★ Curated", "name": "Curated by admin"})
+                data["sections_defined"] = sections
+            data["total_exercises"] = data.get("total_exercises", 0) + len(curated_exercises)
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        # No cache: the curated list is server-state, must be fresh
+        # for admins adding new items and clients listing them.
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return
+
+    def handle_curated_mxl(self, curated_id):
+        item = db.get_curated_mxl(curated_id)
+        if not item:
+            return self.send_json({"error": "Not found"}, 404)
+        xml = item["musicxml"]
+        # The DB stores raw XML (the inner <score-partwise> extracted
+        # from the .mxl zip on upload). The practice page expects a
+        # full <score-partwise> document. We wrap in a minimal envelope
+        # if the stored string is fragment-only.
+        xml = self._wrap_mxl_if_fragment(xml)
+        body = xml.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.recordare.musicxml+xml")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return
+
+    @staticmethod
+    def _wrap_mxl_if_fragment(xml_str):
+        # If the stored XML is a bare <score-partwise> (which is what we
+        # accept on upload), it's already a complete MusicXML document
+        # and the client renders it as-is. If the upload arrived as a
+        # full .mxl zip, we'd have unzipped on upload — so this is a
+        # no-op pass-through for the current path.
+        return xml_str
+
+    def handle_curated_upload(self):
+        admin = self._require_admin()
+        if not admin:
+            return
+        # Multipart form-data: field 'file' (the .mxl) + 'name' (display
+        # label) + optional 'description'. The .mxl is parsed as a
+        # zip and the inner score XML is extracted + stored.
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            return self.send_json({"error": "Expected multipart/form-data"}, 400)
+        try:
+            fields = self._parse_multipart(ctype, self.rfile)
+        except Exception as e:
+            return self.send_json({"error": f"Failed to parse upload: {e}"}, 400)
+        file_field = fields.get("file")
+        if not file_field or not file_field.get("bytes"):
+            return self.send_json({"error": "Missing 'file' field"}, 400)
+        name = (fields.get("name", {}).get("text") or "").strip()
+        if not name:
+            # default to the original filename minus the .mxl extension
+            orig = file_field.get("filename", "curated.mxl")
+            name = orig.rsplit(".", 1)[0]
+        description = (fields.get("description", {}).get("text") or "").strip() or None
+        original_filename = file_field.get("filename")
+        xml_text = self._extract_musicxml_from_upload(
+            file_field["bytes"], original_filename
+        )
+        if not xml_text:
+            return self.send_json(
+                {"error": "Could not find MusicXML inside the upload. "
+                          "Expected a .mxl zip with score.xml or a raw "
+                          "<score-partwise> XML file."},
+                400,
+            )
+        new_id = db.create_curated_mxl(
+            name=name,
+            musicxml=xml_text,
+            description=description,
+            original_filename=original_filename,
+            uploaded_by=admin["id"],
+        )
+        return self.send_json({"ok": True, "id": new_id, "name": name})
+
+    def handle_curated_delete(self, curated_id):
+        admin = self._require_admin()
+        if not admin:
+            return
+        if db.delete_curated_mxl(curated_id):
+            return self.send_json({"ok": True})
+        return self.send_json({"error": "Not found"}, 404)
+
+    @staticmethod
+    def _extract_musicxml_from_upload(raw_bytes, filename):
+        """Pull the inner MusicXML out of either a .mxl zip or a raw
+        <score-partwise> upload. Returns the XML string, or None if
+        neither form is recognisable."""
+        # 1) Try zip first (.mxl is a zip with META-INF/container.xml)
+        if raw_bytes[:2] == b"PK":
+            try:
+                import zipfile as _zip
+                import io as _io
+                with _zip.ZipFile(_io.BytesIO(raw_bytes)) as zf:
+                    # META-INF/container.xml points at the real root file.
+                    try:
+                        container = zf.read("META-INF/container.xml").decode("utf-8")
+                        m = re.search(r'full-path="([^"]+)"', container)
+                        root = m.group(1) if m else None
+                    except Exception:
+                        root = None
+                    if root and root in zf.namelist():
+                        return zf.read(root).decode("utf-8")
+                    # Fallback: first .xml that's not META-INF
+                    for n in zf.namelist():
+                        if n.endswith(".xml") and not n.startswith("META-INF"):
+                            return zf.read(n).decode("utf-8")
+            except Exception:
+                pass
+        # 2) Raw XML upload
+        try:
+            text = raw_bytes.decode("utf-8")
+            if "<score-partwise" in text or "<score-timewise" in text:
+                return text
+        except Exception:
+            pass
+        return None
+
+    def _parse_multipart(self, content_type, rfile):
+        """Tiny multipart/form-data parser for our upload form.
+
+        Returns a dict: { field_name: { 'filename': str|None,
+                                        'bytes': bytes|None,
+                                        'text':  str|None } }
+
+        Only handles a single file per field, and the small subset of
+        MIME features we actually use (no nested parts, no
+        content-transfer-encoding other than binary). Plenty for
+        uploading a .mxl + a name + an optional description.
+        """
+        # Parse boundary from the Content-Type header
+        m = re.search(r"boundary=([^\s;]+)", content_type)
+        if not m:
+            raise ValueError("Missing multipart boundary")
+        boundary = ("--" + m.group(1)).encode("latin-1")
+        # Read the body
+        length = int(self.headers.get("Content-Length", "0"))
+        body = rfile.read(length) if length else b""
+        if not body:
+            return {}
+        out = {}
+        # Split on boundary
+        parts = body.split(boundary)
+        for part in parts:
+            # Each non-empty part starts with \r\n after the boundary
+            # and ends with \r\n--. Strip those.
+            if part in (b"", b"--\r\n", b"--"):
+                continue
+            if part.startswith(b"\r\n"):
+                part = part[2:]
+            if part.endswith(b"\r\n"):
+                part = part[:-2]
+            # Headers are separated from body by \r\n\r\n
+            sep = part.find(b"\r\n\r\n")
+            if sep < 0:
+                continue
+            raw_headers = part[:sep].decode("latin-1", errors="replace")
+            payload = part[sep + 4:]
+            # Parse Content-Disposition
+            cd_m = re.search(
+                r'Content-Disposition:\s*form-data;\s*name="([^"]+)"'
+                r'(?:\s*;\s*filename="([^"]*)")?',
+                raw_headers, re.IGNORECASE
+            )
+            if not cd_m:
+                continue
+            field_name = cd_m.group(1)
+            filename = cd_m.group(2) or None
+            out[field_name] = {
+                "filename": filename,
+                "bytes": payload if filename else None,
+                "text":  None if filename else payload.decode("utf-8", errors="replace"),
+            }
+        return out
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))

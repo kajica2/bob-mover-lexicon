@@ -792,6 +792,34 @@
   color: var(--brass-800, #5a4612);
 }
 
+/* Curated MXL — admin upload widget + list. The list reuses the
+   .etude-card grid above; we only need to nudge the upload form
+   so the file input + name field don't overflow. */
+.curated-upload-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+}
+.curated-upload-form .composer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.curated-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.curated-card .etude-name {
+  /* Curated titles are pre-built pieces, often longer than a
+     stitcher-segment name; let the title wrap onto two lines
+     instead of squeezing the action buttons. */
+  white-space: normal;
+  flex: 1 1 auto;
+  min-width: 200px;
+}
+
 /* Empty / error states */
 .toast {
   position: fixed;

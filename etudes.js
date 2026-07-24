@@ -37,6 +37,7 @@
     wireModeTabs();
     wireSavedListFilter();
     wireAdminLogin();
+    wireCurated();
     renderMasterClass();   // Master Class has no server dependency — render immediately
     fetchExercises().then(function () {
       populateComposerSection();
@@ -117,6 +118,7 @@
       var form = document.getElementById('admin-login-form');
       var status = document.getElementById('admin-status');
       var wrap = document.getElementById('server-etudes-wrap');
+      var isAdmin = !!(body.authenticated && body.user && body.user.role === 'admin');
       if (body.authenticated && body.user) {
         if (loginBtn) loginBtn.hidden = true;
         if (form) form.hidden = true;
@@ -148,6 +150,12 @@
         }
         if (wrap) wrap.hidden = true;
       }
+      // Curated tab upload widget + delete buttons are admin-only.
+      var uploadWrap = document.getElementById('curated-upload-wrap');
+      var noAdmin = document.getElementById('curated-no-admin');
+      if (uploadWrap) uploadWrap.hidden = !isAdmin;
+      if (noAdmin) noAdmin.hidden = isAdmin;
+      refreshCuratedList(isAdmin);
     });
   }
 
@@ -173,6 +181,191 @@
       }
       if (count) count.textContent = '(' + rows.length + ')';
       rows.forEach(function (et) { list.appendChild(makeServerEtudeCard(et)); });
+    });
+  }
+
+  // ---------- Curated MXL ----------
+  // v45: admin-curated MusicXML library. Anyone can read + open
+  // items in the practice page; only admins can upload/delete. The
+  // list refresh runs on init (public read) and again whenever the
+  // admin logs in/out so the upload widget + delete buttons appear
+  // for the right audience.
+  function wireCurated() {
+    var form = document.getElementById('curated-upload-form');
+    if (form) {
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        handleCuratedUpload();
+      });
+    }
+  }
+
+  function refreshCuratedList(isAdmin) {
+    var list = document.getElementById('curated-list');
+    var count = document.getElementById('curated-count');
+    if (!list) return;
+    fetch('/api/curated-mxl').then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    }).then(function (body) {
+      var items = (body && body.items) || [];
+      list.innerHTML = '';
+      if (count) count.textContent = '(' + items.length + ')';
+      if (!items.length) {
+        var empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.id = 'curated-empty';
+        empty.textContent = 'No curated items yet.';
+        list.appendChild(empty);
+        return;
+      }
+      items.forEach(function (c) { list.appendChild(makeCuratedCard(c, isAdmin)); });
+    }).catch(function (err) {
+      list.innerHTML = '<p class="muted" style="color: var(--danger, #b03030);">Failed to load curated items: ' +
+        (err && err.message ? err.message : err) + '</p>';
+    });
+  }
+
+  function makeCuratedCard(c, isAdmin) {
+    var card = document.createElement('div');
+    card.className = 'etude-card curated-card';
+    card.dataset.id = c.id;
+
+    var info = document.createElement('div');
+    info.className = 'etude-info';
+    var titleRow = document.createElement('div');
+    titleRow.className = 'etude-title-row';
+    var name = document.createElement('span');
+    name.className = 'etude-name';
+    name.textContent = c.name;
+    titleRow.appendChild(name);
+    var badge = document.createElement('span');
+    badge.className = 'etude-source-badge';
+    badge.style.background = 'rgba(180, 140, 60, 0.15)';
+    badge.style.color = '#8a6a20';
+    badge.style.borderColor = 'rgba(180, 140, 60, 0.40)';
+    badge.textContent = '★ Curated';
+    titleRow.appendChild(badge);
+    info.appendChild(titleRow);
+
+    if (c.description) {
+      var desc = document.createElement('div');
+      desc.className = 'etude-meta';
+      desc.style.fontStyle = 'italic';
+      desc.textContent = c.description;
+      info.appendChild(desc);
+    }
+
+    var meta = document.createElement('div');
+    meta.className = 'etude-meta';
+    var date = c.updated_at ? new Date(c.updated_at).toLocaleDateString() :
+              (c.created_at ? new Date(c.created_at).toLocaleDateString() : '');
+    var filename = c.original_filename || '';
+    var bits = ['<strong>' + escapeHtml(c.id || '') + '</strong>'];
+    if (date) bits.push(date);
+    if (filename) bits.push(escapeHtml(filename));
+    meta.innerHTML = bits.join(' · ');
+    info.appendChild(meta);
+
+    card.appendChild(info);
+
+    var openLink = document.createElement('a');
+    openLink.className = 'btn-practice';
+    openLink.href = '/practice/?id=' + encodeURIComponent(c.id);
+    openLink.textContent = 'Practice';
+    card.appendChild(openLink);
+
+    var playLink = document.createElement('a');
+    playLink.className = 'btn-play-midi';
+    playLink.href = '/practice/?id=' + encodeURIComponent(c.id) + '&play=1';
+    playLink.textContent = 'Play MIDI';
+    playLink.title = 'Open in Practice and auto-play';
+    card.appendChild(playLink);
+
+    if (isAdmin) {
+      var delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-ghost btn-sm';
+      delBtn.type = 'button';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', function () {
+        if (!confirm('Delete "' + c.name + '"? This cannot be undone.')) return;
+        handleCuratedDelete(c.id, delBtn);
+      });
+      card.appendChild(delBtn);
+    }
+
+    return card;
+  }
+
+  function handleCuratedUpload() {
+    if (!window.etudesServer || !window.etudesServer.isLoggedIn() ||
+        !window.etudesServer.currentUser() ||
+        window.etudesServer.currentUser().role !== 'admin') {
+      toast('Admin login required to upload.', true);
+      return;
+    }
+    var fileInput = document.getElementById('curated-file');
+    var nameInput = document.getElementById('curated-name');
+    var descInput = document.getElementById('curated-description');
+    var statusEl = document.getElementById('curated-upload-status');
+    var file = fileInput.files && fileInput.files[0];
+    if (!file) {
+      statusEl.textContent = 'Pick a .mxl file first.';
+      return;
+    }
+    if (!nameInput.value.trim()) {
+      statusEl.textContent = 'Display name is required.';
+      nameInput.focus();
+      return;
+    }
+    statusEl.textContent = 'Uploading…';
+    var fd = new FormData();
+    fd.append('file', file, file.name);
+    fd.append('name', nameInput.value.trim());
+    if (descInput.value.trim()) fd.append('description', descInput.value.trim());
+    var token = (function () {
+      try { return localStorage.getItem('bml_admin_token') || ''; }
+      catch (e) { return ''; }
+    })();
+    fetch('/api/curated-mxl', {
+      method: 'POST',
+      body: fd,
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+    }).then(function (r) {
+      return r.json().then(function (body) {
+        if (!r.ok) throw new Error((body && body.error) || ('HTTP ' + r.status));
+        return body;
+      });
+    }).then(function (body) {
+      statusEl.textContent = 'Saved as ' + body.id;
+      // Clear the form so a second upload doesn't accidentally re-send
+      // the same file.
+      fileInput.value = '';
+      nameInput.value = '';
+      descInput.value = '';
+      toast('Uploaded "' + body.name + '"');
+      refreshCuratedList(true);
+    }).catch(function (err) {
+      statusEl.textContent = 'Upload failed: ' + (err && err.message ? err.message : err);
+    });
+  }
+
+  function handleCuratedDelete(curatedId, btn) {
+    var token = (function () {
+      try { return localStorage.getItem('bml_admin_token') || ''; }
+      catch (e) { return ''; }
+    })();
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+    fetch('/api/curated-mxl/' + encodeURIComponent(curatedId), {
+      method: 'DELETE',
+      headers: token ? { 'Authorization': 'Bearer ' + token } : {},
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (b) { throw new Error((b && b.error) || ('HTTP ' + r.status)); });
+      toast('Deleted.');
+      refreshCuratedList(true);
+    }).catch(function (err) {
+      toast('Delete failed: ' + (err && err.message ? err.message : err), true);
+      if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
     });
   }
 
@@ -1828,6 +2021,19 @@
           .then(function () { toast('All etudes deleted.'); });
       });
     });
+  }
+
+  // ---------- HTML escape ----------
+  // Used by makeCuratedCard() to prevent name/description fields
+  // from injecting markup into the curated list. Mirrors the same
+  // helper in app.js.
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   // ---------- Toast ----------

@@ -174,6 +174,27 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_etudes_user_created
             ON etudes(user_id, created_at DESC)
         """)
+        # Curated MXL — admin-only, shared across all users. Lets the
+        # admin upload .mxl files via the etudes page Curated tab; they
+        # show up in the browse page as a "★ Curated" section. Anyone
+        # can view + load them; only admins can add/delete.
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS curated_mxl (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                musicxml TEXT NOT NULL,
+                original_filename TEXT,
+                uploaded_by INTEGER,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
+            )
+        """)
+        c.execute("""
+            CREATE INDEX IF NOT EXISTS idx_curated_mxl_created
+            ON curated_mxl(created_at DESC)
+        """)
         # Seed default collections
         c.execute("SELECT COUNT(*) FROM collections")
         if c.fetchone()[0] == 0:
@@ -398,6 +419,73 @@ def delete_collection(collection_id):
         c = conn.cursor()
         c.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
         return c.rowcount > 0
+
+
+# ===== Curated MXL API =====
+# Admin-curated MusicXML library. Shared read across all users; only
+# admins can write. The .mxl is stored inline (not on disk) so the
+# usual file-lifecycle worries (backups, migrations, etc.) collapse
+# to "one SQL row per file". A typical curated MXL is 5-30 KB; the
+# table stays small even with hundreds of entries.
+import uuid as _uuid
+
+def _new_curated_id():
+    return "cur_" + _uuid.uuid4().hex[:12]
+
+def list_curated_mxl():
+    """All curated MXL items, newest first. Public read."""
+    with get_db() as con:
+        rows = con.execute(
+            "SELECT id, name, description, original_filename, "
+            "uploaded_by, created_at, updated_at "
+            "FROM curated_mxl ORDER BY created_at DESC"
+        ).fetchall()
+        return [
+            dict(
+                id=r[0], name=r[1], description=r[2],
+                original_filename=r[3], uploaded_by=r[4],
+                created_at=r[5], updated_at=r[6],
+            )
+            for r in rows
+        ]
+
+def get_curated_mxl(curated_id):
+    """One curated MXL with the full XML body. Returns None if not found."""
+    with get_db() as con:
+        row = con.execute(
+            "SELECT id, name, description, musicxml, original_filename, "
+            "uploaded_by, created_at, updated_at "
+            "FROM curated_mxl WHERE id = ?",
+            (curated_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return dict(
+            id=row[0], name=row[1], description=row[2],
+            musicxml=row[3], original_filename=row[4],
+            uploaded_by=row[5], created_at=row[6], updated_at=row[7],
+        )
+
+def create_curated_mxl(name, musicxml, description=None,
+                       original_filename=None, uploaded_by=None):
+    """Insert a new curated MXL. Returns the new id."""
+    new_id = _new_curated_id()
+    with get_db() as con:
+        con.execute(
+            "INSERT INTO curated_mxl "
+            "(id, name, description, musicxml, original_filename, uploaded_by) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (new_id, name, description, musicxml, original_filename, uploaded_by),
+        )
+    return new_id
+
+def delete_curated_mxl(curated_id):
+    """Delete by id. Returns True if a row was removed."""
+    with get_db() as con:
+        cur = con.execute(
+            "DELETE FROM curated_mxl WHERE id = ?", (curated_id,)
+        )
+        return cur.rowcount > 0
 
 
 # ===== Users / auth =====
