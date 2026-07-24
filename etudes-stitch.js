@@ -536,13 +536,158 @@
     // We do this with a single regex by matching <note>...</note> then
     // checking for <pitch> in each block. For the Master Class's
     // small scores this is fast enough; for huge scores we'd switch
-    // to a proper parser.
+  // to a proper parser.
     const noteBlocks = xml.match(/<note>[\s\S]*?<\/note>/g) || [];
     let n = 0;
     for (let i = 0; i < noteBlocks.length; i++) {
       if (/<pitch>/.test(noteBlocks[i])) n++;
     }
     return n;
+  }
+
+  // Validate a generated etude's notes against the user's saved
+  // instrument range and a maximum-interval "smooth voice leading"
+  // check (no jump larger than a major 7th = 11 semitones). Returns
+  // a structured report so the caller can surface warnings in the UI:
+  //
+  //   {
+  //     pitchedNotes: [{ midi, beat, duration, measureIndex, noteIndex }, ...],
+  //     outOfRange:   [{ midi, measureIndex, noteIndex, pitch, low, high }, ...],
+  //     bigJumps:     [{ from, to, semitones, fromIndex, toIndex }, ...],
+  //     ok:           boolean   // true if no violations found
+  //   }
+  //
+  // Parses the MusicXML with DOMParser (the same parser the practice
+  // page uses for parseMusicXML). Each <note> block contributes one
+  // entry to pitchedNotes if it has a <pitch> (skips rests + chord
+  // tones, matching the practice page's monophony). Range check
+  // uses the user-provided lowMidi/highMidi. Interval check measures
+  // the absolute semitone distance between consecutive pitched
+  // notes — anything > 11 is reported.
+  //
+  // Why both checks: the user wants to confirm their generated etudes
+  // (a) are playable on their instrument (range) and (b) don't have
+  // vocal-leap problems (big jumps). The practice page already
+  // renders and plays whatever is in the MusicXML, so a stray
+  // out-of-range note would either fail to render or play in the
+  // wrong octave via the engine's hardcoded range clamp. Catching
+  // these at generation time is much friendlier than debugging
+  // weird playback later.
+  function validateEtudeNotes(xml, lowMidi, highMidi) {
+    const out = {
+      pitchedNotes: [],
+      outOfRange: [],
+      bigJumps: [],
+      ok: true,
+    };
+    if (!xml || typeof xml !== 'string') {
+      out.ok = false;
+      return out;
+    }
+    let doc;
+    try {
+      doc = new DOMParser().parseFromString(xml, 'application/xml');
+    } catch (e) {
+      out.ok = false;
+      return out;
+    }
+    const measures = doc.querySelectorAll('measure');
+    let absoluteBeat = 0;
+    measures.forEach(function (measure, measureIndex) {
+      const noteElems = measure.querySelectorAll('note');
+      let posInMeasure = 0;
+      // Mirror the practice page's note-walking: extract pitched
+      // notes in order, skip rests and chord tones, advance
+      // posInMeasure by the note's duration. We don't recompute the
+      // duration from <type> here because the purpose is just to
+      // enumerate notes for the range + jump checks; timing
+      // fidelity is the practice page's job.
+      noteElems.forEach(function (note) {
+        if (note.querySelector('rest')) {
+          const dur = note.querySelector('duration');
+          if (dur) {
+            posInMeasure += parseFloat(dur.textContent) / 4;  // divisions=4
+          }
+          return;
+        }
+        if (note.querySelector('chord')) {
+          // Skip chord tones (monophonic — practice page does the same)
+          return;
+        }
+        const stepEl   = note.querySelector('pitch > step');
+        const octaveEl = note.querySelector('pitch > octave');
+        const alterEl  = note.querySelector('pitch > alter');
+        if (!stepEl || !octaveEl) return;
+        const step   = stepEl.textContent.trim();
+        const octave = parseInt(octaveEl.textContent, 10);
+        const alter  = alterEl ? parseInt(alterEl.textContent, 10) : 0;
+        const midi   = pitchToMidi(step, alter, octave);
+        // Mirror practice.js: pitched notes are in the order they
+        // appear; chord tones are skipped; rests advance posInMeasure
+        // but don't emit a note. duration here is the basic <duration>/4
+        // approximation — accurate enough for the validation, which
+        // doesn't need sub-beat precision.
+        const dur = note.querySelector('duration');
+        const durBeats = dur ? parseFloat(dur.textContent) / 4 : 1;
+        out.pitchedNotes.push({
+          midi: midi,
+          beat: absoluteBeat + posInMeasure,
+          duration: durBeats,
+          measureIndex: measureIndex,
+          noteIndex: noteElems.length === 0 ? 0 : Array.prototype.indexOf.call(noteElems, note),
+          pitch: { step: step, alter: alter, octave: octave },
+        });
+        posInMeasure += durBeats;
+      });
+      // The practice page hardcodes 4 beats/measure (see the
+      // "currentTime += 4" line in practice.js). Mirror that for
+      // accurate beat positions in the validation report.
+      absoluteBeat += 4;
+    });
+
+    // Range check: each note must be in [lowMidi, highMidi]
+    if (typeof lowMidi === 'number' && typeof highMidi === 'number') {
+      for (let i = 0; i < out.pitchedNotes.length; i++) {
+        const p = out.pitchedNotes[i];
+        if (p.midi < lowMidi || p.midi > highMidi) {
+          out.outOfRange.push({
+            midi: p.midi,
+            measureIndex: p.measureIndex,
+            noteIndex: p.noteIndex,
+            pitch: p.pitch,
+            low: lowMidi,
+            high: highMidi,
+          });
+        }
+      }
+    }
+
+    // Interval check: absolute semitone distance between consecutive
+    // pitched notes. A 7th is 10 semitones (minor 7th) or 11
+    // semitones (major 7th). Anything > 11 is "wider than a 7th"
+    // and would force a register break on most instruments. We use
+    // 11 as the strict ceiling per the user's "no jump bigger than
+    // 7th" instruction.
+    const MAX_JUMP_SEMITONES = 11;
+    for (let i = 1; i < out.pitchedNotes.length; i++) {
+      const a = out.pitchedNotes[i - 1];
+      const b = out.pitchedNotes[i];
+      const delta = Math.abs(b.midi - a.midi);
+      if (delta > MAX_JUMP_SEMITONES) {
+        out.bigJumps.push({
+          from: a.midi,
+          to:   b.midi,
+          semitones: delta,
+          fromIndex: i - 1,
+          toIndex:   i,
+          fromPitch: a.pitch,
+          toPitch:   b.pitch,
+        });
+      }
+    }
+
+    out.ok = out.outOfRange.length === 0 && out.bigJumps.length === 0;
+    return out;
   }
 
   window.etudesStitch = {
@@ -553,5 +698,6 @@
     clampToRange: clampToRange,
     buildMasterClassEtude: buildMasterClassEtude,
     countPitchedNotes: countPitchedNotes,
+    validateEtudeNotes: validateEtudeNotes,
   };
 })();

@@ -117,6 +117,10 @@
                 <input id="chk-playback-metronome" type="checkbox" checked>
                 <span>🥁 Metronome</span>
               </label>
+              <label class="checkbox loop-toggle" title="Loop playback continuously (each iteration starts after the previous one ends)">
+                <input id="chk-playback-loop" type="checkbox">
+                <span>🔁 Loop</span>
+              </label>
               <label class="metro-inline-label">Time
                 <select id="metro-timesig" class="input input-sm" title="Time signature for the metronome">
                   <option value="4/4">4/4</option>
@@ -273,13 +277,13 @@
     </div>
   </main>
 
-  <script src="vendor/verovio-toolkit.js?v=32"></script>
-  <script src="vendor/Tone.js?v=32"></script>
-  <script src="../range-modal.js?v=32"></script>
-  <script src="takes-store.js?v=32"></script>
-  <script src="../etudes-store.js?v=32"></script>
-  <script src="playback-engine.js?v=32"></script>
-  <script src="practice.js?v=32"></script>
+  <script src="vendor/verovio-toolkit.js?v=33"></script>
+  <script src="vendor/Tone.js?v=33"></script>
+  <script src="../range-modal.js?v=33"></script>
+  <script src="takes-store.js?v=33"></script>
+  <script src="../etudes-store.js?v=33"></script>
+  <script src="playback-engine.js?v=33"></script>
+  <script src="practice.js?v=33"></script>
   <!-- Full-page overlay (sheet music only, no other UI) — top-level for z-index correctness -->
   <div id="fullpage-overlay" class="fullpage-overlay" style="display:none">
     <div class="fullpage-toolbar">

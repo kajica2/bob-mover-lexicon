@@ -802,8 +802,10 @@
     // pitches already) but warn if anything falls outside the user's
     // saved range so a future curriculum edit doesn't silently produce
     // out-of-range notes.
+    let rangeUsed = null;
     try {
       const r = getEtudesRange();
+      rangeUsed = r;
       const clamped = window.etudesStitch.clampToRange(xml, r.lowMidi, r.highMidi);
       if (clamped.moved > 0) {
         toast('Shifted ' + clamped.moved + ' note(s) into your instrument range.');
@@ -811,6 +813,53 @@
       }
     } catch (e) {
       console.warn('clampToRange failed for master-class etude (continuing):', e);
+    }
+
+    // v33: validate the final XML against the user's range and a
+    // max-interval check (no jump > 7th = 11 semitones). We warn
+    // (don't block) so the user still gets the etude to practice,
+    // but with a clear heads-up that the line has either an
+    // out-of-range note or a vocal-leap bigger than a 7th. The
+    // curriculum's pitches are alto-sax-friendly so a clean run is
+    // the norm; warnings mean either a future curriculum edit
+    // pushed a note out of range, or a future curriculum change
+    // introduced a big jump that needs splitting into two lines.
+    if (rangeUsed && window.etudesStitch.validateEtudeNotes) {
+      try {
+        const report = window.etudesStitch.validateEtudeNotes(
+          xml, rangeUsed.lowMidi, rangeUsed.highMidi
+        );
+        if (!report.ok) {
+          const parts = [];
+          if (report.outOfRange.length) {
+            parts.push(
+              report.outOfRange.length + ' note(s) outside range'
+            );
+          }
+          if (report.bigJumps.length) {
+            parts.push(
+              report.bigJumps.length + ' jump(s) wider than a 7th'
+            );
+          }
+          if (parts.length) {
+            // .error class makes the toast red; user can still
+            // proceed to practice the etude.
+            toast(
+              '⚠ ' + line.name + ': ' + parts.join(', ') + '.',
+              true
+            );
+            // Log the specific violations to the console for debugging.
+            if (report.outOfRange.length) {
+              console.warn('[mc] out-of-range notes:', report.outOfRange);
+            }
+            if (report.bigJumps.length) {
+              console.warn('[mc] big jumps:', report.bigJumps);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('validateEtudeNotes failed (continuing):', e);
+      }
     }
 
     const pitchedCount = window.etudesStitch.countPitchedNotes(xml);

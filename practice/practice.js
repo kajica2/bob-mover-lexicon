@@ -1487,6 +1487,25 @@
       });
     }
 
+    // v33: Loop toggle. Same checkbox pattern as the metronome. The
+    // engine reads its loopOn flag inside the onEnd closure and
+    // re-arms playback (with a 200ms gap) if set. We don't pre-arm
+    // or queue anything here — toggling just flips the flag. The
+    // current pass plays to its natural end and the loop callback
+    // picks up the new value when it fires.
+    const loopBtn = document.getElementById('chk-playback-loop');
+    if (loopBtn) {
+      const engLoop0 = window.playbackEngine;
+      if (engLoop0 && typeof engLoop0.setLoop === 'function') {
+        engLoop0.setLoop(!!loopBtn.checked);
+      }
+      loopBtn.addEventListener('change', () => {
+        const on = !!loopBtn.checked;
+        const eng = window.playbackEngine;
+        if (eng && typeof eng.setLoop === 'function') eng.setLoop(on);
+      });
+    }
+
     // ---- Standalone metronome (free-running) ----
     // v22. Lives in the side panel. Independent of any exercise — click
     // Start and the click track begins at the configured BPM, with the

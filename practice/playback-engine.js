@@ -98,6 +98,20 @@
   let onBeatCb    = null;
   let onEndCb     = null;
   let initialized = false;
+  // Loop playback. When loopOn, the engine re-arms the schedule at
+  // the end of the current iteration (with a small gap so the ear
+  // registers the new pass). playGeneration invalidates any pending
+  // loop callback when stop() runs — without it, a setTimeout fired
+  // 200ms after a Stop click would silently re-arm playback. Each
+  // play() bumps the generation; stop() bumps it again; the loop
+  // callback only re-arms if its captured generation still matches.
+  let loopOn        = false;
+  let playGeneration = 0;
+  // Gap between loop iterations. 200ms is short enough to feel
+  // continuous but long enough to register the start of the new
+  // pass to the ear — and crucially, to give the previous note's
+  // release tail time to fade out before the next attack.
+  const LOOP_GAP_MS = 200;
   // Standalone-metronome-only state (set/cleared by startMetronome/stopMetronome)
   let metroRepeatId = null;      // Transport.scheduleRepeat handle
 
@@ -237,6 +251,12 @@
     const T = tone;
     if (!T) return false;
 
+    // Bump the generation so any previously-pending loop callback
+    // (from a prior play() that was looped) sees the mismatch and
+    // does not re-arm. Captured in a local for the loop check below.
+    playGeneration++;
+    const myGen = playGeneration;
+
     // Establish tempo on the Transport.
     try { T.Transport.bpm.value = bpm; } catch (e) {}
 
@@ -349,12 +369,28 @@
       }
     }
 
-    // onEnd after the last note tails out.
+    // onEnd after the last note tails out. When loop is on, schedule
+    // a recursive play() after a short gap so the next pass begins
+    // cleanly. The generation check guards against re-arming after
+    // the user has clicked Stop (which bumps playGeneration, making
+    // myGen !== playGeneration in the closure).
     const totalBeatsForEnd = totalBeatsOf(notes);
     const totalSecs = beatToSec(totalBeatsForEnd) + 0.2;
     const endId = T.Transport.scheduleOnce(() => {
       if (onEndCb) {
         try { onEndCb(); } catch (e) {}
+      }
+      if (loopOn && myGen === playGeneration) {
+        // Re-arm after a small gap so the ear registers the new pass
+        // and the previous note's release tail can fade out. The
+        // setTimeout fires on the main thread; if stop() runs in the
+        // 200ms window, it'll bump playGeneration and the closure
+        // here will see the mismatch and skip the recursive play().
+        setTimeout(function () {
+          if (loopOn && myGen === playGeneration) {
+            play({ onNote: onNoteCb, onBeat: onBeatCb, onEnd: onEndCb });
+          }
+        }, LOOP_GAP_MS);
       }
     }, audioStart + totalSecs);
     scheduledIds.push(endId);
@@ -370,7 +406,11 @@
   // Transport.stop() — that would also halt scheduleRepeat and kill
   // the click track. Just clear the exercise's scheduled events and
   // release the synth; the Transport keeps ticking for the standalone.
+  // Bumps playGeneration so any pending loop setTimeout (the
+  // setTimeout(play) in the onEnd closure) sees the mismatch and
+  // skips the recursive re-arm.
   function stop() {
+    playGeneration++;
     clearScheduled();
     if (tone && metroRepeatId == null) {
       try { tone.Transport.stop(); } catch (e) {}
@@ -393,6 +433,17 @@
   // Toggle metronome. We don't pre-schedule here; play() handles it.
   function setMetronome(on) {
     metronomeOn = !!on;
+  }
+
+  // Toggle loop playback. When on, the engine re-arms the schedule
+  // at the end of each iteration (with a 200ms gap so the ear
+  // registers the new pass). Hot-swappable: the next time the
+  // current iteration ends, the new value takes effect. Safe to
+  // toggle mid-iteration; the current pass plays to its natural
+  // end and the loop callback checks the current value when it
+  // fires.
+  function setLoop(on) {
+    loopOn = !!on;
   }
 
   // Configure metronome options (time signature, subdivision). v22.
@@ -682,6 +733,7 @@
     stop: stop,
     setTempo: setTempo,
     setMetronome: setMetronome,
+    setLoop: setLoop,
     setMetroConfig: setMetroConfig,
     startMetronome: startMetronome,
     stopMetronome: stopMetronome,
