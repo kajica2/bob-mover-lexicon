@@ -233,6 +233,7 @@
     min3: 3,
     '4ths': 5,
     '5ths': 7,
+    'desc2': -2,  // descending whole steps (covers 6 unique keys)
   };
 
   // Per-instrument playable MIDI range (concert pitch). Notes outside the
@@ -256,18 +257,22 @@
     min3: 'Minor 3rds',
     '4ths': 'In 4ths',
     '5ths': 'In 5ths',
+    'desc2': 'Descending (-2 each bar)',
   };
 
   // Build a sequence of 12 semitone offsets for the given mode (mod 12).
+  // Handles negative steps (descending cycles) via ((x % n) + n) % n so
+  // the result is always in [0, 12).
   function cycleKeySequence(mode) {
     if (mode === 'off' || mode == null) return [0];
     const step = CYCLE_STEP[mode];
     if (step == null) return [0];
+    const mod12 = (x) => ((x % 12) + 12) % 12;
     const seq = [];
     let s = 0;
     for (let i = 0; i < 12; i++) {
       seq.push(s);
-      s = (s + step) % 12;
+      s = mod12(s + step);
     }
     return seq;
   }
@@ -325,9 +330,12 @@
     try {
       const opts = {
         scale: state.zoomScale,
-        // Server inserts <print new-system="yes"/> every 4 measures, so
-        // we just respect the print marks here.
-        breaks: 'auto',
+        // Server inserts <print new-system="yes"/> every 4 measures (see
+        // server.py insert_line_breaks). Use 'encoded' so Verovio only
+        // breaks at those explicit marks — never in the middle of a
+        // measure. (Per the project rule: next-line can only be at a
+        // barline.)
+        breaks: 'encoded',
         adjustPageHeight: true,
         justifyVertically: false,
         spacingSystem: 6,

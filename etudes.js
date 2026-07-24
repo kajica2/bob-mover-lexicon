@@ -1045,7 +1045,12 @@
         var tk = new v.toolkit();
         tk.setOptions({
           scale: 28,
-          breaks: 'auto',
+          // Respect only explicit <print new-system="yes"/> marks (the
+          // etudes-stitch inserts these at every segment boundary, and
+          // server.py insert_line_breaks adds them every 4 measures
+          // within each source). Per the project rule: a system break
+          // may only fall at a barline, never halfway through a measure.
+          breaks: 'encoded',
           adjustPageHeight: true,
           justifyVertically: false,
           spacingSystem: 4,
