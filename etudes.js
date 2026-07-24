@@ -1298,19 +1298,84 @@
     // the new etude starts with a fresh auto-name. (On re-rolls the
     // typed name carries over so the user can keep iterating.)
     if (!isReroll) state.random.typedName = null;
-    // Pick `count` unique random exercises from the pool.
+
+    // Sync pick: just one random selection. Kept for the no-validation
+    // path so the user sees something immediately while we work out
+    // whether the re-pick loop can find a cleaner one.
+    const quickPick = pickRandom(pool, count, spread);
+
+    // Now do the re-pick loop. The Generator's job is to give the user
+    // a clean etude by default — the previous behaviour just picked once
+    // and showed whatever came out, which often had 2-3 octave leaps
+    // because Lexicon exercises live in their own little pitch
+    // neighbourhoods and stitching them naively produces huge boundary
+    // leaps. The stitch() boundary smoothing in etudes-stitch.js handles
+    // the most common case, but within-exercise wide intervals (e.g.
+    // chromatic sequences that span 2 octaves) still get through. To
+    // avoid those, we try up to MAX_REPICK_ATTEMPTS different random
+    // combinations and keep the one with the fewest big jumps. If any
+    // attempt has zero big jumps, we use it immediately.
+    const userRange = getEtudesRange();
+    pickCleanest(pool, count, spread, quickPick, userRange).then(function (best) {
+      state.random.lastPreview = best.picked;
+      renderRandomPreview();
+    });
+  }
+
+  // Pick `count` unique random exercises from the pool with random
+  // semitones in [-spread, spread]. Returns [{id, semitones}, ...].
+  function pickRandom(pool, count, spread) {
     const indices = [];
     while (indices.length < count) {
       const r = Math.floor(Math.random() * pool.length);
       if (indices.indexOf(r) < 0) indices.push(r);
     }
-    const picked = indices.map(function (i) {
+    return indices.map(function (i) {
       const ex = pool[i];
       const semitones = spread === 0 ? 0 : Math.round((Math.random() * 2 - 1) * spread);
       return { id: ex.id, semitones: semitones };
     });
-    state.random.lastPreview = picked;
-    renderRandomPreview();
+  }
+
+  // Try up to MAX_REPICK_ATTEMPTS random picks and return the one with
+  // the fewest big jumps in the stitched output. If any pick has zero
+  // big jumps, return immediately. The first pick is always included
+  // (so we don't lose entropy) -- if it's already clean, we never
+  // re-pick.
+  const MAX_REPICK_ATTEMPTS = 8;
+  // Threshold above which we treat the pick as "definitely bad" and
+  // keep looking. 18 semitones is a minor 6th -- wider than that and
+  // the music has clearly visible register breaks that the user
+  // flagged as a bug.
+  const CLEAN_PICK_MAX_LEAP = 18;
+  async function pickCleanest(pool, count, spread, firstPick, userRange) {
+    if (!window.etudesStitch || !window.etudesStitch.stitch || !window.etudesStitch.validateEtudeNotes) {
+      // Validation unavailable -- fall back to the first pick so the
+      // user still gets something.
+      return { picked: firstPick, attempts: 1, clean: false };
+    }
+    const lo = userRange && typeof userRange.lowMidi === 'number' ? userRange.lowMidi : 21;
+    const hi = userRange && typeof userRange.highMidi === 'number' ? userRange.highMidi : 108;
+    const candidates = [firstPick];
+    for (let i = 1; i < MAX_REPICK_ATTEMPTS; i++) candidates.push(pickRandom(pool, count, spread));
+    let best = null;
+    for (let i = 0; i < candidates.length; i++) {
+      const picked = candidates[i];
+      let xml;
+      try {
+        xml = await window.etudesStitch.stitch(picked, 'preview');
+      } catch (e) {
+        continue;  // skip on error, try next
+      }
+      const r = window.etudesStitch.validateEtudeNotes(xml, lo, hi);
+      const worst = r.bigJumps.length ? Math.max.apply(null, r.bigJumps.map(function (b) { return b.semitones; })) : 0;
+      const clean = r.bigJumps.length === 0 || worst <= CLEAN_PICK_MAX_LEAP;
+      if (!best || worst < best.worst) {
+        best = { picked: picked, attempts: i + 1, clean: clean, worst: worst, bigJumps: r.bigJumps.length };
+      }
+      if (r.bigJumps.length === 0) break;  // perfect, stop
+    }
+    return best;
   }
 
   function renderRandomPreview() {

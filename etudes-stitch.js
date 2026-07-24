@@ -52,6 +52,15 @@
 (function () {
   'use strict';
 
+  // In-memory cache of raw MusicXML bodies fetched from /api/musicxml/<id>.
+  // The server's response doesn't depend on semitones (the request query
+  // is fixed in fetchSource), so the raw fetch can be reused across
+  // multiple pickCleanest() iterations -- without this, re-picking 8
+  // times with 8 exercises each would be 64 network round trips per
+  // Generate click. Map key is the exercise id, value is the response
+  // text. Cleared implicitly on page reload.
+  const sourceCache = Object.create(null);
+
   const STEP_TO_OFFSET = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
   const OFFSET_TO_STEP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   // Note: 'B#' is enharmonically 'C' but we don't expect it from these exercises.
@@ -302,13 +311,19 @@
   }
 
   // Fetch + unwrap a single exercise's MusicXML. The server returns the
-  // <score-partwise> root element directly.
+  // <score-partwise> root element directly. The raw fetch is cached
+  // per exercise id so repeated calls (e.g. the pickCleanest re-pick
+  // loop in etudes.js) don't hit the network again.
   async function fetchSource(exerciseId, semitones) {
-    const url = '/api/musicxml/' + exerciseId +
-                '?instrument=concert&transpose=0&low=21&high=108';
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('Failed to fetch ex ' + exerciseId + ': HTTP ' + r.status);
-    let xml = await r.text();
+    let xml = sourceCache[exerciseId];
+    if (xml == null) {
+      const url = '/api/musicxml/' + exerciseId +
+                  '?instrument=concert&transpose=0&low=21&high=108';
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('Failed to fetch ex ' + exerciseId + ': HTTP ' + r.status);
+      xml = await r.text();
+      sourceCache[exerciseId] = xml;
+    }
     if (semitones) {
       xml = transposePitch(xml, semitones);
       // After transposing, re-spell every pitch so the notation matches
