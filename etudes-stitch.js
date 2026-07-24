@@ -22,6 +22,19 @@
  *                                   rewriting <work-title>, dropping extra
  *                                   <print> elements, inserting light
  *                                   <barline> markers between segments.
+ *                                   Also smooths segment boundaries: if
+ *                                   the leap from the previous segment's
+ *                                   last note to the new segment's first
+ *                                   note is wider than an octave, the
+ *                                   new segment is transposed by ±1
+ *                                   octave to keep the boundary under
+ *                                   a major 7th. This is the user-facing
+ *                                   fix for the "huge leaps on 1-2
+ *                                   notes" bug -- the random generator
+ *                                   was producing stitched etudes where
+ *                                   one exercise ended high and the next
+ *                                   started low, creating a 2-3 octave
+ *                                   jump at every segment boundary.
  *
  * Idempotent: stitch() over a single part returns that part's measures
  * unchanged in pitch (modulo transpose). stitch() over 12 parts produces
@@ -64,6 +77,43 @@
       ? (OFFSET_TO_STEP[pitchClass].charAt(1) === '#' ? '1' : '-1')
       : '0';
     return { step: step, alter: accidental, octave: String(octave) };
+  }
+
+  // Read the MIDI value of the first pitched note in a measure XML
+  // string, or null if the measure has no pitched note (only rests).
+  // Used by the boundary-smoothing pass in stitch() to detect huge
+  // leaps at segment boundaries. Skips chord tones and rests, matching
+  // the practice page's monophony.
+  function firstNoteMidi(measureXml) {
+    const m = measureXml.match(/<note>[\s\S]*?<\/note>/);
+    if (!m) return null;
+    if (/<rest>/.test(m[0])) return null;
+    return pitchOfNoteXml(m[0]);
+  }
+
+  // Read the MIDI value of the last pitched note in a measure XML string,
+  // or null if the measure has no pitched note. Walks notes from the end
+  // so trailing rests don't fool the reader.
+  function lastNoteMidi(measureXml) {
+    const notes = measureXml.match(/<note>[\s\S]*?<\/note>/g);
+    if (!notes || !notes.length) return null;
+    for (let i = notes.length - 1; i >= 0; i--) {
+      if (/<rest>/.test(notes[i])) continue;
+      const m = pitchOfNoteXml(notes[i]);
+      if (m !== null) return m;
+    }
+    return null;
+  }
+
+  // Helper: pull the MIDI value of a single <note>...</note> block.
+  // Returns null if the block is unparseable (no <step> or <octave>).
+  function pitchOfNoteXml(noteXml) {
+    const stepM = /<step>\s*([A-G])\s*<\/step>/.exec(noteXml);
+    const octM  = /<octave>\s*(-?\d+)\s*<\/octave>/.exec(noteXml);
+    if (!stepM || !octM) return null;
+    const altM = /<alter>\s*(-?\d+)\s*<\/alter>/.exec(noteXml);
+    const alter = altM ? parseInt(altM[1], 10) : 0;
+    return pitchToMidi(stepM[1], alter, parseInt(octM[1], 10));
   }
 
   // Transpose every <pitch> in an XML string by N semitones. Returns a new
@@ -357,6 +407,17 @@
     // boundary and clutter the score), and concatenate. Insert a system-
     // break <print> between segments.
     const allMeasures = [];
+    // Max acceptable leap at a segment boundary, in semitones. Anything
+    // bigger than this (an octave) gets the new segment transposed by
+    // ±1 octave to bring the boundary under the ceiling. Chosen at 12
+    // (= one octave) because that's a comfortable register break on
+    // every instrument this app supports; anything more is an
+    // unmusical leap that the user has flagged as a bug.
+    const MAX_BOUNDARY_LEAP = 12;
+    // The MIDI value of the last pitched note of the previous segment.
+    // Tracked across the outer loop so each new segment can decide
+    // whether to shift itself.
+    let prevSegmentLastMidi = null;
     for (let i = 0; i < sources.length; i++) {
       const xml = sources[i];
       const cleaned = stripPrintElements(stripWorkBlock(xml));
@@ -366,6 +427,24 @@
       // measure markers that confuse the layout when measures are stitched.
       for (let j = 0; j < measures.length; j++) {
         measures[j] = measures[j].replace(/<barline\b[^>]*>[\s\S]*?<\/barline>/g, '');
+      }
+      // Smooth the segment boundary. If the leap from the previous
+      // segment's last note to this segment's first note is wider than
+      // MAX_BOUNDARY_LEAP semitones, transpose the whole new segment
+      // by ±1 octave to bring the boundary under the ceiling. We
+      // transpose the whole segment (not just the first measure) so
+      // the segment's internal interval structure stays intact.
+      if (prevSegmentLastMidi !== null) {
+        const firstMidi = firstNoteMidi(measures[0]);
+        if (firstMidi !== null) {
+          const leap = Math.abs(firstMidi - prevSegmentLastMidi);
+          if (leap > MAX_BOUNDARY_LEAP) {
+            const shift = firstMidi > prevSegmentLastMidi ? -12 : 12;
+            for (let j = 0; j < measures.length; j++) {
+              measures[j] = transposePitch(measures[j], shift);
+            }
+          }
+        }
       }
       // v29: time signatures are preserved as-is. The Bob Mover Lexicon
       // doesn't emit <time> elements (it's "free-rhythm"), but if a
@@ -380,6 +459,10 @@
       for (let j = 1; j < measures.length; j++) {
         allMeasures.push(measures[j]);
       }
+      // Track the last note of THIS segment so the next iteration can
+      // check its boundary with us.
+      const segLast = lastNoteMidi(measures[measures.length - 1]);
+      if (segLast !== null) prevSegmentLastMidi = segLast;
     }
 
     // Sanity: stitch across the same exercise ID is fine (produces
